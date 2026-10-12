@@ -332,31 +332,135 @@ Review and align project documentation regarding guess attempts to explicitly st
 
 ---
 
-## 2026-10-12: Extension Phase — Planning Difficulty, Scoring & UI Overhaul
+## 2026-10-12: Extension Phase, Milestone 1 — Planning Difficulty, Scoring & UI Overhaul
 
 ### Objective
 Establish the implementation plan and architecture for extending the Master Mind game with configurable difficulty levels (Easy, Medium, Hard), attempt limits, difficulty-aware and attempt-efficiency scoring, session score tracking, and an ANSI terminal interface with plain-text fallback.
 
-### Baseline Review
+### Baseline Review & Actions
 1. **Toolchain & Status**:
    - Edition 2024, `rustc 1.98.1`, `cargo 1.98.1`, `rand = "0.8"`.
-   - Working tree clean, all 29 existing tests passing.
+   - Working tree clean, all 29 baseline tests passing.
 2. **Implementation Strategy**:
    - Decompose monolithic `src/main.rs` into focused modules:
      - `src/config.rs`: `Difficulty`, `DifficultyConfig`, `BASE_POINTS = 100`.
      - `src/scoring.rs`: Slice-based duplicate-safe Bulls & Cows scoring supporting arbitrary sequence lengths, plus `calculate_score`.
-     - `src/game.rs`: Runtime `parse_guess`, `generate_target`, `GameState`, `GameOutcome` with win/loss/quit/EOF conditions.
+     - `src/game.rs`: Runtime `parse_guess`, `generate_target`, `GameSession`, `GameOutcome` with win/loss/quit/EOF conditions.
      - `src/ui.rs`: Formatted box-drawing, color themes, progress bar, score breakdown, plain-text fallback respecting `NO_COLOR`.
      - `src/main.rs`: Top-level coordinator managing difficulty selection, session score accumulation, and replay menu.
    - Transition target and guess internal storage from `[u32; M]` to `Vec<u32>` while preserving slice-based `score_guess(&[u32], &[u32])`.
-   - Implement incremental milestones with tests and Conventional Commits.
+3. **Commit Hash**: `904e091` (`docs: plan difficulty and scoring extension`)
 
+---
 
+## 2026-10-12: Extension Phase, Milestone 2 — Difficulty Levels & Configuration Module
 
+### Objective
+Implement centralized difficulty levels and runtime configuration parameters in `src/config.rs`.
 
+### Actions & Design Decisions
+1. **Module Creation (`src/config.rs`)**:
+   - Defined `enum Difficulty { Easy, Medium, Hard }` deriving `Debug, Clone, Copy, PartialEq, Eq`.
+   - Defined `struct DifficultyConfig` holding `difficulty: Difficulty`, `sequence_length: usize`, `max_value: u32`, `max_attempts: usize`, `multiplier: f64`.
+   - Centralized parameters:
+     - Easy: $M=3, N=4, L=10$, multiplier 1.0×.
+     - Medium: $M=4, N=6, L=9$, multiplier 2.0×.
+     - Hard: $M=5, N=8, L=8$, multiplier 4.0×.
+   - Defined `pub const BASE_POINTS: u32 = 100;`.
+   - Implemented `parse_from_input` supporting `"1"`, `"2"`, `"3"` or names `"easy"`, `"medium"`, `"hard"`.
+2. **Unit Tests**:
+   - Verified configuration parameters, iterator, and input parsing.
+3. **Commit Hash**: `ee5f493` (`feat(config): add difficulty levels and parameters`)
 
+---
 
+## 2026-10-12: Extension Phase, Milestone 3 — Slice-Based Scoring & Multiplier Formula
 
+### Objective
+Update Bulls & Cows scoring to support arbitrary sequence lengths via borrowed slices, implement difficulty and attempt scoring multipliers, and prove score band stratification.
 
+### Actions & Design Decisions
+1. **Module Creation (`src/scoring.rs`)**:
+   - Updated `score_guess(target: &[u32], guess: &[u32]) -> (usize, usize)` to allocate dynamic boolean markers `vec![false; len]`, continuing to accept borrowed slices `&[u32]`.
+   - Implemented `calculate_score(config: &DifficultyConfig, attempts_used: usize) -> ScoreBreakdown`.
+     - $\text{attempt\_multiplier} = 1.0 + \frac{L - A}{L}$ using 64-bit float arithmetic.
+     - $\text{final\_score} = \operatorname{round}(\text{BASE\_POINTS} \times \text{diff\_mult} \times \text{att\_mult}) \text{ as } \text{u32}$.
+     - Asserted $1 \le A \le L$ to prevent out-of-range scoring invocations.
+2. **Mathematical Invariant & Differential Tests**:
+   - Verified that score intervals never overlap: Easy (100–190) < Medium (200–378) < Hard (400–750).
+   - Extended seeded randomized differential testing (`StdRng::seed_from_u64(42)`) to 3,000 cases per difficulty tier (9,000 total iterations) against the independent multiset oracle.
+3. **Commit Hash**: `8583bf2` (`feat(scoring): implement slice-based Bulls and Cows scoring and score calculation`)
 
+---
 
+## 2026-10-12: Extension Phase, Milestone 4 — Runtime Guess Parsing, Target Generation & Attempt Limits
+
+### Objective
+Support runtime validation against active `DifficultyConfig`, generate dynamic length targets, and implement the game session state machine with strict attempt limits.
+
+### Actions & Design Decisions
+1. **Module Creation (`src/game.rs`)**:
+   - Updated `parse_guess(input: &str, config: &DifficultyConfig) -> Result<Vec<u32>, GuessError>` to validate against runtime $M$ and $N$.
+   - Updated `generate_target(config: &DifficultyConfig)` and `generate_target_with_rng`.
+   - Defined `GameSession` managing round-local attempts, evaluating `submit_guess(guess) -> GameOutcome`.
+   - **Win-Before-Loss Edge Case**: Verified that if $bulls == M$ on attempt $A = L$, `GameOutcome::Won` is returned rather than `GameOutcome::Lost`.
+2. **Unit Tests**:
+   - Covered attempt limit edge cases (win on 1st attempt, win on final attempt, loss on final attempt), length/range parsing, and replay choices.
+3. **Commit Hash**: `e3e3b10` (`feat(game): implement runtime guess parsing, target generation, and attempt limits`)
+
+---
+
+## 2026-10-12: Extension Phase, Milestone 5 — ANSI Terminal Interface & Plain-Text Fallback
+
+### Objective
+Create a decoupled, polished terminal user interface supporting Unicode box drawing, colored feedback, progress bars, and clean plain-text fallback.
+
+### Actions & Design Decisions
+1. **Module Creation (`src/ui.rs`)**:
+   - Defined `ColorMode` (Auto, Enabled, Disabled) inspecting `NO_COLOR` environment variable.
+   - Implemented Unicode box-drawing banners, status panels, and attempt progress bars (`[████████░░] 8 remaining`).
+   - Implemented victory score breakdowns, loss reveal panels, and replay selection menus.
+   - Enforced immediate style resets (`\x1b[0m`) to prevent color sequence bleeding.
+2. **Unit Tests**:
+   - Proved `ColorMode::Disabled` outputs strictly zero escape sequences (`\x1b[`).
+   - Verified progress bar string rendering and summary formatting.
+3. **Commit Hash**: `f568274` (`feat(ui): add ANSI terminal interface with box drawing and plain text fallback`)
+
+---
+
+## 2026-10-12: Extension Phase, Milestone 6 — Main Coordinator, Session Scoring & Replay Flow
+
+### Objective
+Assemble modules into `src/main.rs`, manage the interactive replay loop, cumulative session score tracking, and automated stream integration tests.
+
+### Actions & Design Decisions
+1. **Application Coordinator (`src/main.rs`)**:
+   - Implemented `select_difficulty`: prompts user with menu and re-prompts on invalid input.
+   - Implemented `play_round`: runs a single code-cracking round, prints UI feedback, updates session score on victory.
+   - Implemented `ask_replay`: prompts for (1) replay same difficulty, (2) change difficulty, or (3) exit.
+   - Implemented `run_with_color` and `main`: tracks `session_score` across rounds, resetting only on process termination.
+2. **Integration Tests**:
+   - Implemented 8 end-to-end tests verifying victory, final attempt win, attempt exhaustion loss, invalid input recovery, replay difficulty switching, and quitting.
+3. **Verification**:
+   - All 37 tests passing in 0.08s.
+4. **Commit Hash**: `926d397` (`refactor(main): coordinate difficulty selection, session scoring, and replay loop`)
+
+---
+
+## 2026-10-12: Extension Phase, Milestone 7 — Documentation Synchronization
+
+### Objective
+Synchronize user guide, design document, testing methodology, and development log with the completed extension implementation.
+
+### Actions & Design Decisions
+1. **Design Documentation (`docs/DESIGN.md`)**:
+   - Added Section 13 detailing vector transition, slice continuity, centralized configuration, attempt limit FSM, scoring formula, and decoupled UI architecture.
+   - Commit Hash: `bc3f8af` (`docs: document runtime difficulty, scoring, and UI extension in design doc`)
+2. **User Guide (`README.md`)**:
+   - Updated configuration table (Easy, Medium, Hard), scoring formula with worked examples, ANSI & `NO_COLOR` fallback instructions, and new modular file tree.
+   - Commit Hash: `6a3f11f` (`docs: update README with difficulty levels, score formula, and ANSI UI`)
+3. **Testing Documentation (`docs/TESTING.md`)**:
+   - Documented 37 test cases, multi-difficulty differential testing results (9,000 cases), and exact verification outcomes.
+   - Commit Hash: `7832d53` (`docs: update test documentation with difficulty and attempt limit test results`)
+4. **Development Log (`docs/DEV_LOG.md`)**:
+   - Finalized chronological record of all extension milestones and commit hashes.
