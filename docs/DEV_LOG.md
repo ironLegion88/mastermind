@@ -142,7 +142,51 @@ Implement the duplicate-safe `score_guess` function using the two-pass marker al
 
 ### Status & Next Steps
 - Scoring algorithm and tests completed and verified.
-- Commit Steps 2–4.
+- Commit Hash: `eaac432`
 - Proceed to Step 5: Input parsing and validation (`parse_guess`).
+
+---
+
+## 2026-10-12: Phase 2, Step 5 — Input Parsing and Validation
+
+### Objective
+Implement input parsing and validation logic in `parse_guess`, supporting whitespace separation, quit command detection, integer parsing, token count verification, peg range validation, safe conversion into `[u32; M]`, and informative error reporting via `GuessError`.
+
+### Actions & Design Decisions
+1. **Error Enum (`src/main.rs`)**:
+   - Defined `GuessError` with variants:
+     - `Quit`: player requested graceful game termination.
+     - `EmptyInput`: player entered an empty line or only whitespace.
+     - `InvalidLength { expected: usize, actual: usize }`: count mismatch.
+     - `NonInteger(String)`: token cannot parse as an integer.
+     - `OutOfRange { value: u32, min: u32, max: u32 }`: integer parsed outside $1..=N$.
+   - Implemented `std::fmt::Display` and `std::error::Error` for user-facing terminal messages.
+2. **Parsing Function (`src/main.rs`)**:
+   - Implemented `pub fn parse_guess(input: &str) -> Result<[u32; M], GuessError>`.
+   - Tokenization via `split_whitespace()` natively supports single spaces, multiple spaces, and tabs.
+   - Checked `quit` (case-insensitive) prior to numeric parsing.
+   - Parsed tokens into a temporary `Vec<u32>` buffer.
+   - Validated length against $M$ and value range against $1..=N$.
+   - Safely copied elements from `Vec<u32>` into fixed array `[u32; M]` using `copy_from_slice()`.
+3. **Unit Tests for Parsing**:
+   - Implemented 8 dedicated unit test functions:
+     - `test_parse_guess_valid`: valid inputs and repetitions.
+     - `test_parse_guess_whitespace_variations`: multiple spaces, tabs, leading/trailing whitespace.
+     - `test_parse_guess_quit_command`: case-insensitive variations ("quit", "QUIT", "  quit  \t").
+     - `test_parse_guess_empty_input`: empty strings and whitespace-only lines.
+     - `test_parse_guess_invalid_length`: too few (1, 3) and too many (5, 6) numbers.
+     - `test_parse_guess_non_integer_tokens`: alphabetic strings, floats, negatives.
+     - `test_parse_guess_out_of_range`: below 1, above 6, large numbers.
+     - `test_guess_error_display`: formatted error messages.
+4. **Verification**:
+   - `cargo check`: Passed.
+   - `cargo fmt --check`: Clean formatting verified.
+   - `cargo test`: All 20 tests passed cleanly in 0.03s.
+
+### Status & Next Steps
+- Input parsing and validation complete and verified.
+- Commit Step 5.
+- Proceed to Step 6: Random target generation (`generate_target`).
+
 
 

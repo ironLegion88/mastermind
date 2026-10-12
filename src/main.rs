@@ -74,6 +74,107 @@ pub fn score_guess(target: &[u32], guess: &[u32]) -> (usize, usize) {
     (bulls, cows)
 }
 
+/// Errors that can occur when parsing and validating a user's guess input.
+#[derive(Debug, PartialEq, Eq)]
+pub enum GuessError {
+    /// The user requested to quit the game (e.g., entered "quit").
+    Quit,
+    /// The user submitted an empty line (or only whitespace).
+    EmptyInput,
+    /// The number of tokens was not equal to M.
+    InvalidLength { expected: usize, actual: usize },
+    /// A token could not be parsed as a positive integer.
+    NonInteger(String),
+    /// A parsed integer is outside the valid range 1..=N.
+    OutOfRange { value: u32, min: u32, max: u32 },
+}
+
+impl std::fmt::Display for GuessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GuessError::Quit => write!(f, "Game quit requested."),
+            GuessError::EmptyInput => write!(
+                f,
+                "Input was empty. Please enter {M} numbers separated by spaces."
+            ),
+            GuessError::InvalidLength { expected, actual } => {
+                write!(
+                    f,
+                    "Invalid number of values: expected {expected}, but received {actual}."
+                )
+            }
+            GuessError::NonInteger(token) => {
+                write!(f, "Invalid token '{token}': must be a positive integer.")
+            }
+            GuessError::OutOfRange { value, min, max } => {
+                write!(
+                    f,
+                    "Value {value} is out of range: each number must be between {min} and {max} (inclusive)."
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for GuessError {}
+
+/// Parses and validates a raw input string into a fixed-size guess array `[u32; M]`.
+///
+/// # Validation Steps:
+/// 1. Recognizes the `quit` command (case-insensitive) before numeric parsing.
+/// 2. Splits input across any whitespace (spaces, multiple spaces, tabs).
+/// 3. Parses all tokens into a temporary `Vec<u32>`.
+/// 4. Verifies that exactly `M` numbers were provided.
+/// 5. Verifies that every number lies within the inclusive range `1..=N`.
+/// 6. Safely converts the validated numbers into the fixed-size array `[u32; M]`.
+///
+/// Repeated numbers are explicitly allowed and preserved.
+pub fn parse_guess(input: &str) -> Result<[u32; M], GuessError> {
+    let tokens: Vec<&str> = input.split_whitespace().collect();
+
+    if tokens.is_empty() {
+        return Err(GuessError::EmptyInput);
+    }
+
+    // 1. Recognize quit command before numeric parsing
+    if tokens.len() == 1 && tokens[0].eq_ignore_ascii_case("quit") {
+        return Err(GuessError::Quit);
+    }
+
+    // 2. Parse tokens into integers, collecting into temporary Vec<u32>
+    let mut values = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        match token.parse::<u32>() {
+            Ok(val) => values.push(val),
+            Err(_) => return Err(GuessError::NonInteger((*token).to_string())),
+        }
+    }
+
+    // 3. Verify exactly M values were provided
+    if values.len() != M {
+        return Err(GuessError::InvalidLength {
+            expected: M,
+            actual: values.len(),
+        });
+    }
+
+    // 4. Verify every value lies in 1..=N
+    for &val in &values {
+        if !(1..=N).contains(&val) {
+            return Err(GuessError::OutOfRange {
+                value: val,
+                min: 1,
+                max: N,
+            });
+        }
+    }
+
+    // 5. Explicit, safe conversion into [u32; M]
+    let mut validated = [0u32; M];
+    validated.copy_from_slice(&values);
+    Ok(validated)
+}
+
 fn main() {
     println!("Master Mind / Bulls and Cows (M = {M}, N = {N})");
 }
@@ -329,5 +430,156 @@ mod tests {
                 "Permutation invariant failed: target={target:?}, permuted={permuted_target:?}"
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Unit Tests for parse_guess
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_guess_valid() {
+        assert_eq!(parse_guess("1 2 3 4"), Ok([1, 2, 3, 4]));
+        assert_eq!(parse_guess("2 2 5 5"), Ok([2, 2, 5, 5]));
+        assert_eq!(parse_guess("6 1 6 1"), Ok([6, 1, 6, 1]));
+    }
+
+    #[test]
+    fn test_parse_guess_whitespace_variations() {
+        // Multiple spaces
+        assert_eq!(parse_guess("1   2    3     4"), Ok([1, 2, 3, 4]));
+        // Leading and trailing spaces
+        assert_eq!(parse_guess("   1 2 3 4   "), Ok([1, 2, 3, 4]));
+        // Tabs and mixed whitespace
+        assert_eq!(parse_guess("\t1 \t 2  3\t 4\n"), Ok([1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_parse_guess_quit_command() {
+        assert_eq!(parse_guess("quit"), Err(GuessError::Quit));
+        assert_eq!(parse_guess("QUIT"), Err(GuessError::Quit));
+        assert_eq!(parse_guess("Quit"), Err(GuessError::Quit));
+        assert_eq!(parse_guess("  quit  \t"), Err(GuessError::Quit));
+    }
+
+    #[test]
+    fn test_parse_guess_empty_input() {
+        assert_eq!(parse_guess(""), Err(GuessError::EmptyInput));
+        assert_eq!(parse_guess("   "), Err(GuessError::EmptyInput));
+        assert_eq!(parse_guess("\t  \n"), Err(GuessError::EmptyInput));
+    }
+
+    #[test]
+    fn test_parse_guess_invalid_length() {
+        // Too few tokens
+        assert_eq!(
+            parse_guess("1 2 3"),
+            Err(GuessError::InvalidLength {
+                expected: 4,
+                actual: 3
+            })
+        );
+        assert_eq!(
+            parse_guess("1"),
+            Err(GuessError::InvalidLength {
+                expected: 4,
+                actual: 1
+            })
+        );
+
+        // Too many tokens
+        assert_eq!(
+            parse_guess("1 2 3 4 5"),
+            Err(GuessError::InvalidLength {
+                expected: 4,
+                actual: 5
+            })
+        );
+        assert_eq!(
+            parse_guess("1 2 3 4 5 6"),
+            Err(GuessError::InvalidLength {
+                expected: 4,
+                actual: 6
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_guess_non_integer_tokens() {
+        assert_eq!(
+            parse_guess("1 2 abc 4"),
+            Err(GuessError::NonInteger("abc".to_string()))
+        );
+        assert_eq!(
+            parse_guess("1 2.5 3 4"),
+            Err(GuessError::NonInteger("2.5".to_string()))
+        );
+        assert_eq!(
+            parse_guess("1 -2 3 4"),
+            Err(GuessError::NonInteger("-2".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_guess_out_of_range() {
+        // Below minimum (0 < 1)
+        assert_eq!(
+            parse_guess("0 2 3 4"),
+            Err(GuessError::OutOfRange {
+                value: 0,
+                min: 1,
+                max: 6
+            })
+        );
+
+        // Above maximum (7 > 6)
+        assert_eq!(
+            parse_guess("1 2 7 4"),
+            Err(GuessError::OutOfRange {
+                value: 7,
+                min: 1,
+                max: 6
+            })
+        );
+
+        // High value
+        assert_eq!(
+            parse_guess("1 2 3 99"),
+            Err(GuessError::OutOfRange {
+                value: 99,
+                min: 1,
+                max: 6
+            })
+        );
+    }
+
+    #[test]
+    fn test_guess_error_display() {
+        // Verify user-facing error message formatting
+        assert_eq!(GuessError::Quit.to_string(), "Game quit requested.");
+        assert_eq!(
+            GuessError::EmptyInput.to_string(),
+            "Input was empty. Please enter 4 numbers separated by spaces."
+        );
+        assert_eq!(
+            GuessError::InvalidLength {
+                expected: 4,
+                actual: 2
+            }
+            .to_string(),
+            "Invalid number of values: expected 4, but received 2."
+        );
+        assert_eq!(
+            GuessError::NonInteger("xyz".to_string()).to_string(),
+            "Invalid token 'xyz': must be a positive integer."
+        );
+        assert_eq!(
+            GuessError::OutOfRange {
+                value: 9,
+                min: 1,
+                max: 6
+            }
+            .to_string(),
+            "Value 9 is out of range: each number must be between 1 and 6 (inclusive)."
+        );
     }
 }
