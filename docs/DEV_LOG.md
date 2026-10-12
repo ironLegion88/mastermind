@@ -90,6 +90,59 @@ Define the compile-time sequence length ($M = 4$) and peg value upper bound ($N 
 
 ### Status & Next Steps
 - Project configured and constants defined.
-- Commit Step 1.
+- Commit Hash: `160f6c4`
 - Proceed to Step 2: Implement the duplicate-safe scoring function `score_guess`.
+
+---
+
+## 2026-10-12: Phase 2, Steps 2–4 — Duplicate-Safe Scoring Function & Testing
+
+### Objective
+Implement the duplicate-safe `score_guess` function using the two-pass marker algorithm, write deterministic unit tests covering all edge cases, implement an independent multiset frequency reference scorer, and perform reproducible randomized differential testing.
+
+### Actions & Design Decisions
+1. **Scoring Function Implementation (`src/main.rs`)**:
+   - Implemented `pub fn score_guess(target: &[u32], guess: &[u32]) -> (usize, usize)`.
+   - Function borrows both sequences as immutable slices `&[u32]`, enforcing non-consumption and non-mutation of inputs.
+   - Preconditions enforced with `assert_eq!` validating length equals $M$.
+   - Allocated stack-based boolean markers `target_used: [bool; M]` and `guess_used: [bool; M]` initialized to `false` (zero heap allocation).
+   - **Pass 1 (Bulls)**: Identified exact index matches `target[i] == guess[i]`, marked both indices as `true`, incremented `bulls`.
+   - **Pass 2 (Cows)**: For unmatched guess indices, scanned for unmatched target indices with identical values. Upon first match, marked both as `true`, incremented `cows`, and executed `break` to prevent multiple matches for the same peg.
+2. **Deterministic Unit Tests (`src/main.rs`)**:
+   - Implemented 10 deterministic test functions covering:
+     - All Bulls (`[1, 2, 3, 4]` vs `[1, 2, 3, 4]`, and all identical `[3, 3, 3, 3]`).
+     - All Cows (`[1, 2, 3, 4]` vs `[4, 3, 2, 1]`, and misplaced pairs `[1, 1, 2, 2]` vs `[2, 2, 1, 1]`).
+     - Mixed Bulls and Cows (`[1, 2, 3, 4]` vs `[1, 3, 2, 5]` $\to (1, 2)$).
+     - No matches (`[1, 2, 3, 4]` vs `[5, 6, 5, 6]`).
+     - Repeated values in target vs single in guess (`[1, 1, 2, 3]` vs `[1, 4, 5, 6]` and `[4, 5, 1, 6]`).
+     - Repeated values in guess vs single in target (`[1, 2, 3, 4]` vs `[1, 1, 1, 1]`).
+     - Duplicate overcounting traps (`[1, 2, 2, 3]` vs `[2, 2, 4, 2]` $\to (1, 1)$).
+     - Entirely outside matching set (`[1, 2, 3, 4]` vs `[6, 6, 6, 6]`).
+3. **Reference Scorer & Randomized Differential Testing**:
+   - Implemented `reference_score_guess(target: &[u32], guess: &[u32]) -> (usize, usize)` using multiset frequency counts:
+     - $\text{bulls} = \sum [target[i] == guess[i]]$
+     - $\text{total\_matches} = \sum_{v=1}^N \min(\text{freq}_T(v), \text{freq}_G(v))$
+     - $\text{cows} = \text{total\_matches} - \text{bulls}$
+   - Created reproducible randomized test with `StdRng::seed_from_u64(42)` executing 10,000 random target/guess pairs.
+   - Verified 5 essential invariants across all 10,000 cases:
+     - Exact agreement between `score_guess` and `reference_score_guess`.
+     - $\text{bulls} \le M$ and $\text{cows} \le M$.
+     - $\text{bulls} + \text{cows} \le M$.
+     - Self-comparison: $\text{score}(A, A) = (M, 0)$.
+     - Reverse-permutation multiset invariant: $\text{bulls} + \text{cows} = M$.
+4. **Test Failures & Resolutions**:
+   - *First test run*: 10 tests passed, 2 failed.
+     - `test_repeated_values_in_target_single_in_guess`: Test setup had `target = [1, 1, 2, 3]` and `guess = [4, 1, 5, 6]` expecting `(0, 1)`, but at index 1 both target and guess contained 1 (an exact Bull). Corrected guess to `[4, 5, 1, 6]` so peg 1 was placed at index 2 where target had 2.
+     - `test_duplicate_overcounting_edge_cases`: Test setup had `target = [1, 1, 1, 2]` and `guess = [3, 4, 1, 1]` expecting `(0, 2)`, but index 2 was an exact match (Bull). Corrected target to `[1, 1, 2, 2]` with guess `[3, 4, 1, 1]`.
+   - *Second test run*: All 12 unit and randomized tests passed cleanly in 0.03s.
+5. **Verification**:
+   - `cargo check`: Success.
+   - `cargo fmt --check`: Clean.
+   - `cargo test`: 12 passed, 0 failed.
+
+### Status & Next Steps
+- Scoring algorithm and tests completed and verified.
+- Commit Steps 2–4.
+- Proceed to Step 5: Input parsing and validation (`parse_guess`).
+
 
