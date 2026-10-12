@@ -62,8 +62,34 @@ Formulate and document the pre-implementation design decisions, architectural bo
    - Formulated Section 10: Three-tier testing strategy (Deterministic unit tests, reproducible randomized differential testing with seeded `StdRng`, and manual/stream integration tests).
    - Formulated Section 11 & 12: Limitations and deviations.
 2. **Commit Baseline**:
-   - Commit initial documentation files (`docs/DESIGN.md` and `docs/DEV_LOG.md`) before commencing implementation code.
+   - Staged documentation files (`docs/DESIGN.md` and `docs/DEV_LOG.md`) and committed.
+   - Commit Hash: `400ddf9`
 
 ### Status & Next Steps
-- Documentation files created and ready to be committed.
-- Proceed to Phase 2: Incremental implementation starting with constants, dependencies, and the duplicate-safe scoring function.
+- Baseline design documented and committed.
+- Proceed to Phase 2: Incremental implementation starting with constants, project configuration, and duplicate-safe scoring algorithm.
+
+---
+
+## 2026-10-12: Phase 2, Step 1 — Constants and Project Configuration
+
+### Objective
+Define the compile-time sequence length ($M = 4$) and peg value upper bound ($N = 6$), and configure the project dependency for random number generation (`rand = "0.8"`).
+
+### Actions & Design Decisions
+1. **Dependency Configuration (`Cargo.toml`)**:
+   - Added `rand = "0.8"` under `[dependencies]` to support random target generation and seeded PRNG testing.
+   - Built dependencies via `cargo check`, compiling `rand v0.8.8` and its sub-crates.
+2. **Compile-time Constants (`src/main.rs`)**:
+   - Defined `pub const M: usize = 4;` (sequence length).
+   - Defined `pub const N: u32 = 6;` (peg range upper bound, valid values $1..=N$).
+   - Kept $M$ and $N$ as centrally defined constants with doc-comments to avoid magic numbers throughout the codebase.
+3. **Verification**:
+   - Executed `cargo check`: Finished successfully.
+   - Executed `cargo fmt --check`: Clean formatting verified.
+
+### Status & Next Steps
+- Project configured and constants defined.
+- Commit Step 1.
+- Proceed to Step 2: Implement the duplicate-safe scoring function `score_guess`.
+
