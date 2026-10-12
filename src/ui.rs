@@ -111,7 +111,7 @@ pub fn render_progress_bar(
     )
 }
 
-/// Renders the prominent Mastermind title banner and welcome panel.
+/// Renders the prominent Mastermind title banner, welcome panel, and game instructions.
 pub fn render_banner<W: Write>(writer: &mut W, color: ColorMode) -> io::Result<()> {
     writeln!(
         writer,
@@ -136,6 +136,29 @@ pub fn render_banner<W: Write>(writer: &mut W, color: ColorMode) -> io::Result<(
         writer,
         "{}",
         color.cyan("╰──────────────────────────────────────────────────╯")
+    )?;
+    writeln!(writer, "\n{}", color.bold("How to Play:"))?;
+    writeln!(
+        writer,
+        "  • The computer generates a secret code of numbers."
+    )?;
+    writeln!(
+        writer,
+        "  • {} (exact match): correct number in the correct position.",
+        color.green("Bulls")
+    )?;
+    writeln!(
+        writer,
+        "  • {} (misplaced):   correct number in an incorrect position.",
+        color.yellow("Cows")
+    )?;
+    writeln!(
+        writer,
+        "  • Repeated numbers are permitted in both secret and guesses."
+    )?;
+    writeln!(
+        writer,
+        "  • Enter numbers separated by spaces (e.g., '1 2 3 4') or 'quit' to exit."
     )?;
     Ok(())
 }
@@ -493,6 +516,9 @@ mod tests {
         assert!(str_ansi.contains("\x1b["));
         assert!(!str_plain.contains("\x1b["));
         assert!(str_plain.contains("M A S T E R M I N D"));
+        assert!(str_plain.contains("How to Play:"));
+        assert!(str_plain.contains("Bulls"));
+        assert!(str_plain.contains("Cows"));
     }
 
     #[test]
