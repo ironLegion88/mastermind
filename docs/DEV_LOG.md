@@ -328,7 +328,29 @@ Review and align project documentation regarding guess attempts to explicitly st
 3. **Verification**:
    - Verified that code in `src/main.rs` continues looping until win, quit, or EOF as expected.
    - All tests remain valid and passing.
-   - Commit Hash: `b266fbe`
+   - Commit Hash: `b266fbe` / `82d63f3`
+
+---
+
+## 2026-10-12: Extension Phase — Planning Difficulty, Scoring & UI Overhaul
+
+### Objective
+Establish the implementation plan and architecture for extending the Master Mind game with configurable difficulty levels (Easy, Medium, Hard), attempt limits, difficulty-aware and attempt-efficiency scoring, session score tracking, and an ANSI terminal interface with plain-text fallback.
+
+### Baseline Review
+1. **Toolchain & Status**:
+   - Edition 2024, `rustc 1.98.1`, `cargo 1.98.1`, `rand = "0.8"`.
+   - Working tree clean, all 29 existing tests passing.
+2. **Implementation Strategy**:
+   - Decompose monolithic `src/main.rs` into focused modules:
+     - `src/config.rs`: `Difficulty`, `DifficultyConfig`, `BASE_POINTS = 100`.
+     - `src/scoring.rs`: Slice-based duplicate-safe Bulls & Cows scoring supporting arbitrary sequence lengths, plus `calculate_score`.
+     - `src/game.rs`: Runtime `parse_guess`, `generate_target`, `GameState`, `GameOutcome` with win/loss/quit/EOF conditions.
+     - `src/ui.rs`: Formatted box-drawing, color themes, progress bar, score breakdown, plain-text fallback respecting `NO_COLOR`.
+     - `src/main.rs`: Top-level coordinator managing difficulty selection, session score accumulation, and replay menu.
+   - Transition target and guess internal storage from `[u32; M]` to `Vec<u32>` while preserving slice-based `score_guess(&[u32], &[u32])`.
+   - Implement incremental milestones with tests and Conventional Commits.
+
 
 
 
