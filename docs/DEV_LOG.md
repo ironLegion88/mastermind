@@ -464,3 +464,39 @@ Synchronize user guide, design document, testing methodology, and development lo
    - Commit Hash: `7832d53` (`docs: update test documentation with difficulty and attempt limit test results`)
 4. **Development Log (`docs/DEV_LOG.md`)**:
    - Finalized chronological record of all extension milestones and commit hashes.
+   - Commit Hash: `31a105d` (`docs: finalize development log with extension milestones and commit hashes`)
+
+---
+
+## 2026-10-12: Extension Phase, Milestone 8 — In-Game Description, Refactoring Documentation & Mermaid Diagrams
+
+### Objective
+Integrate in-game rules and instructions into the opening banner, document the evolutionary refactoring of `main.rs` (what was kept, changed, and added with educational rationale), provide pure Mermaid diagrams for control flow and state transitions, and ensure complete architectural coverage across all modules.
+
+### Actions & Design Decisions
+1. **In-Game Description & Rules (`src/ui.rs`)**:
+   - Enhanced `render_banner` to display an informative "How to Play" section explaining secret generation, Bulls (exact matches), Cows (misplaced matches), repetition allowance, input format, and the `quit` command.
+   - Added test assertions in `test_ui_panels_render_in_both_modes` verifying that game instructions appear cleanly in both ANSI and plain-text fallback modes.
+   - Commit Hash: `595d5d0` (`feat(ui): display game rules and description in initial welcome banner`).
+2. **Comprehensive Refactoring Analysis (`docs/DESIGN.md`, Section 14)**:
+   - Added a detailed comparative matrix and analysis documenting what was preserved (two-pass matching, slice borrowing, structured error enums, whitespace tolerance, RNG dependency injection, reference oracle), what was adapted (vector storage, dynamic markers, parameterized bounds), and what was added (difficulty types, attempt limits, scoring formula, session tally, ANSI presentation layer).
+   - Documented the educational and architectural rationale for each decision.
+3. **Control Flow & State Machine Diagrams (`docs/DESIGN.md`, Section 15; `README.md`; `docs/TESTING.md`)**:
+   - Implemented pure Mermaid diagrams for:
+     - Top-level application control flow (`flowchart TD`)
+     - Round game state machine & transitions (`stateDiagram-v2`)
+     - Attempt counter and win-before-loss evaluation precedence (`flowchart TD`)
+     - Module dependency and data flow hierarchy (`graph TD`)
+     - Testing tier architecture (`graph TD`)
+   - Strictly adhered to Mermaid diagrams without ASCII/ANSI diagram art per user preference.
+4. **Complete Program Architectural Reference (`docs/DESIGN.md`, Section 16)**:
+   - Documented full API surfaces, structs, enums, error contracts, and algorithms for all five modules (`config.rs`, `scoring.rs`, `game.rs`, `ui.rs`, `main.rs`).
+5. **Associated Commits**:
+   - `595d5d0`: `feat(ui): display game rules and description in initial welcome banner`
+   - `2a1899c`: `docs: add refactoring analysis, Mermaid diagrams, and module reference to design doc`
+   - `2f5b1ec`: `docs: add Mermaid state transitions and update welcome rules in README`
+6. **Verification**:
+   - `cargo fmt --check`: 0 diffs.
+   - `cargo check`: 0 warnings.
+   - `cargo test`: All 37 tests passing cleanly in 0.06s.
+
