@@ -185,8 +185,36 @@ Implement input parsing and validation logic in `parse_guess`, supporting whites
 
 ### Status & Next Steps
 - Input parsing and validation complete and verified.
-- Commit Step 5.
+- Commit Hash: `afb038e`
 - Proceed to Step 6: Random target generation (`generate_target`).
+
+---
+
+## 2026-10-12: Phase 2, Step 6 — Random Target Generation
+
+### Objective
+Implement secret target sequence generation (`generate_target`) creating an array of $M$ integers uniformly sampled from $1..=N$ with repetitions permitted, along with unit tests.
+
+### Actions & Design Decisions
+1. **Implementation (`src/main.rs`)**:
+   - Implemented `pub fn generate_target() -> [u32; M]` delegating to `generate_target_with_rng(&mut rand::thread_rng())`.
+   - Implemented `pub fn generate_target_with_rng<R: rand::Rng + ?Sized>(rng: &mut R) -> [u32; M]` allowing generic RNG injection.
+   - Populated stack-allocated fixed-size array `[u32; M]` with values sampled via `rng.gen_range(1..=N)`.
+   - Guaranteed pure sequence generation with no terminal I/O.
+2. **Unit Tests (`src/main.rs`)**:
+   - `test_generate_target_length_and_range`: Executed 1,000 iterations verifying every target has length $M$ and every peg lies in $1..=N$.
+   - `test_generate_target_allows_repetitions`: Sampled targets across 500 iterations verifying that targets with duplicate values are produced and allowed.
+   - `test_generate_target_deterministic_with_seeded_rng`: Seeded `StdRng::seed_from_u64(9999)` twice and verified identical generated targets.
+3. **Verification**:
+   - `cargo check`: Passed.
+   - `cargo fmt --check`: Clean formatting verified.
+   - `cargo test`: All 23 tests passed cleanly in 0.03s.
+
+### Status & Next Steps
+- Random target generation complete and verified.
+- Commit Step 6.
+- Proceed to Steps 7 & 8: Interactive gameplay, game loop, quit, win, and replay handling.
+
 
 
 

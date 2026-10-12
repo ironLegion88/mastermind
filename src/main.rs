@@ -175,6 +175,25 @@ pub fn parse_guess(input: &str) -> Result<[u32; M], GuessError> {
     Ok(validated)
 }
 
+/// Generates a secret target sequence of exactly M integers, each uniformly
+/// sampled from the inclusive range 1..=N.
+///
+/// Repeated values are permitted in the target sequence.
+pub fn generate_target() -> [u32; M] {
+    generate_target_with_rng(&mut rand::thread_rng())
+}
+
+/// Helper function generating a secret target sequence using a provided RNG.
+///
+/// Permits deterministic target generation in tests via seeded RNG implementations.
+pub fn generate_target_with_rng<R: rand::Rng + ?Sized>(rng: &mut R) -> [u32; M] {
+    let mut target = [0u32; M];
+    for peg in &mut target {
+        *peg = rng.gen_range(1..=N);
+    }
+    target
+}
+
 fn main() {
     println!("Master Mind / Bulls and Cows (M = {M}, N = {N})");
 }
@@ -581,5 +600,54 @@ mod tests {
             .to_string(),
             "Value 9 is out of range: each number must be between 1 and 6 (inclusive)."
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Unit Tests for generate_target
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_generate_target_length_and_range() {
+        for _ in 0..1_000 {
+            let target = generate_target();
+            assert_eq!(target.len(), M);
+            for peg in target {
+                assert!(
+                    (1..=N).contains(&peg),
+                    "Target peg {peg} out of range 1..={N}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_target_allows_repetitions() {
+        // Run enough trials to guarantee seeing duplicates with high statistical probability
+        let mut found_duplicate = false;
+        for _ in 0..500 {
+            let target = generate_target();
+            let mut unique = target.to_vec();
+            unique.sort_unstable();
+            unique.dedup();
+            if unique.len() < M {
+                found_duplicate = true;
+                break;
+            }
+        }
+        assert!(
+            found_duplicate,
+            "Expected random generation to allow repeated numbers"
+        );
+    }
+
+    #[test]
+    fn test_generate_target_deterministic_with_seeded_rng() {
+        let mut rng1 = StdRng::seed_from_u64(9999);
+        let mut rng2 = StdRng::seed_from_u64(9999);
+
+        let target1 = generate_target_with_rng(&mut rng1);
+        let target2 = generate_target_with_rng(&mut rng2);
+
+        assert_eq!(target1, target2);
     }
 }
