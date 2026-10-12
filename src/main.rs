@@ -3,335 +3,221 @@
 
 use std::io::{self, BufRead, Write};
 
-/// The number of pegs (sequence length) in the secret target and each guess.
+pub mod config;
+pub mod game;
+pub mod scoring;
+pub mod ui;
+
+// Re-exports for clean API access and backward compatibility
+pub use config::{BASE_POINTS, Difficulty, DifficultyConfig};
+pub use game::{
+    GameOutcome, GameSession, GuessError, GuessEvaluation, ReplayChoice, generate_target,
+    generate_target_with_rng, parse_guess,
+};
+pub use scoring::{ScoreBreakdown, calculate_score, score_guess};
+pub use ui::{
+    ColorMode, render_banner, render_difficulty_menu, render_error, render_feedback,
+    render_loss_summary, render_progress_bar, render_quit_summary, render_replay_menu,
+    render_status_panel, render_win_summary,
+};
+
+/// Default sequence length for Medium difficulty (preserved for backwards compatibility).
 pub const M: usize = 4;
 
-/// The maximum integer value for each peg (valid range is 1..=N).
+/// Default peg maximum value for Medium difficulty (preserved for backwards compatibility).
 pub const N: u32 = 6;
 
-/// Calculates the number of Bulls and Cows between a secret target and a player guess.
-///
-/// - A **Bull** is an exact match at the same position (`target[i] == guess[i]`).
-/// - A **Cow** is a match at different positions (`target[t] == guess[g]` where `t != g`),
-///   counted only after all Bulls have been accounted for.
-/// - **Duplicate Safety**: Neither target pegs nor guess pegs may be counted more than once.
-///   Each peg index can participate in at most one match (either Bull or Cow).
-///
-/// # Arguments
-/// * `target` - Slice representing the secret code sequence.
-/// * `guess` - Slice representing the player's guess sequence.
-///
-/// # Returns
-/// A tuple `(bulls, cows)`.
-pub fn score_guess(target: &[u32], guess: &[u32]) -> (usize, usize) {
-    assert_eq!(
-        target.len(),
-        M,
-        "target length ({}) must equal M ({})",
-        target.len(),
-        M
-    );
-    assert_eq!(
-        guess.len(),
-        M,
-        "guess length ({}) must equal M ({})",
-        guess.len(),
-        M
-    );
-
-    let mut bulls = 0;
-    let mut cows = 0;
-
-    // Temporary boolean marker arrays to track matched positions.
-    // Stack-allocated: zero heap allocation overhead, fixed compile-time size M.
-    let mut target_used = [false; M];
-    let mut guess_used = [false; M];
-
-    // Pass 1: Identify Bulls (exact position and value matches).
-    // Marking both target and guess positions ensures they cannot be re-used as Cows.
-    for i in 0..M {
-        if target[i] == guess[i] {
-            bulls += 1;
-            target_used[i] = true;
-            guess_used[i] = true;
-        }
-    }
-
-    // Pass 2: Identify Cows (matching values at different positions).
-    // For each unmatched guess peg, search for an unmatched target peg with the same value.
-    for g in 0..M {
-        if !guess_used[g] {
-            for t in 0..M {
-                if !target_used[t] && guess[g] == target[t] {
-                    cows += 1;
-                    target_used[t] = true;
-                    guess_used[g] = true;
-                    // Stop searching once this guess peg is paired with an unmatched target peg
-                    break;
-                }
-            }
-        }
-    }
-
-    (bulls, cows)
-}
-
-/// Errors that can occur when parsing and validating a user's guess input.
-#[derive(Debug, PartialEq, Eq)]
-pub enum GuessError {
-    /// The user requested to quit the game (e.g., entered "quit").
-    Quit,
-    /// The user submitted an empty line (or only whitespace).
-    EmptyInput,
-    /// The number of tokens was not equal to M.
-    InvalidLength { expected: usize, actual: usize },
-    /// A token could not be parsed as a positive integer.
-    NonInteger(String),
-    /// A parsed integer is outside the valid range 1..=N.
-    OutOfRange { value: u32, min: u32, max: u32 },
-}
-
-impl std::fmt::Display for GuessError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GuessError::Quit => write!(f, "Game quit requested."),
-            GuessError::EmptyInput => write!(
-                f,
-                "Input was empty. Please enter {M} numbers separated by spaces."
-            ),
-            GuessError::InvalidLength { expected, actual } => {
-                write!(
-                    f,
-                    "Invalid number of values: expected {expected}, but received {actual}."
-                )
-            }
-            GuessError::NonInteger(token) => {
-                write!(f, "Invalid token '{token}': must be a positive integer.")
-            }
-            GuessError::OutOfRange { value, min, max } => {
-                write!(
-                    f,
-                    "Value {value} is out of range: each number must be between {min} and {max} (inclusive)."
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for GuessError {}
-
-/// Parses and validates a raw input string into a fixed-size guess array `[u32; M]`.
-///
-/// # Validation Steps:
-/// 1. Recognizes the `quit` command (case-insensitive) before numeric parsing.
-/// 2. Splits input across any whitespace (spaces, multiple spaces, tabs).
-/// 3. Parses all tokens into a temporary `Vec<u32>`.
-/// 4. Verifies that exactly `M` numbers were provided.
-/// 5. Verifies that every number lies within the inclusive range `1..=N`.
-/// 6. Safely converts the validated numbers into the fixed-size array `[u32; M]`.
-///
-/// Repeated numbers are explicitly allowed and preserved.
-pub fn parse_guess(input: &str) -> Result<[u32; M], GuessError> {
-    let tokens: Vec<&str> = input.split_whitespace().collect();
-
-    if tokens.is_empty() {
-        return Err(GuessError::EmptyInput);
-    }
-
-    // 1. Recognize quit command before numeric parsing
-    if tokens.len() == 1 && tokens[0].eq_ignore_ascii_case("quit") {
-        return Err(GuessError::Quit);
-    }
-
-    // 2. Parse tokens into integers, collecting into temporary Vec<u32>
-    let mut values = Vec::with_capacity(tokens.len());
-    for token in &tokens {
-        match token.parse::<u32>() {
-            Ok(val) => values.push(val),
-            Err(_) => return Err(GuessError::NonInteger((*token).to_string())),
-        }
-    }
-
-    // 3. Verify exactly M values were provided
-    if values.len() != M {
-        return Err(GuessError::InvalidLength {
-            expected: M,
-            actual: values.len(),
-        });
-    }
-
-    // 4. Verify every value lies in 1..=N
-    for &val in &values {
-        if !(1..=N).contains(&val) {
-            return Err(GuessError::OutOfRange {
-                value: val,
-                min: 1,
-                max: N,
-            });
-        }
-    }
-
-    // 5. Explicit, safe conversion into [u32; M]
-    let mut validated = [0u32; M];
-    validated.copy_from_slice(&values);
-    Ok(validated)
-}
-
-/// Generates a secret target sequence of exactly M integers, each uniformly
-/// sampled from the inclusive range 1..=N.
-///
-/// Repeated values are permitted in the target sequence.
-pub fn generate_target() -> [u32; M] {
-    generate_target_with_rng(&mut rand::thread_rng())
-}
-
-/// Helper function generating a secret target sequence using a provided RNG.
-///
-/// Permits deterministic target generation in tests via seeded RNG implementations.
-pub fn generate_target_with_rng<R: rand::Rng + ?Sized>(rng: &mut R) -> [u32; M] {
-    let mut target = [0u32; M];
-    for peg in &mut target {
-        *peg = rng.gen_range(1..=N);
-    }
-    target
-}
-
-/// The outcome of an individual game session.
-#[derive(Debug, PartialEq, Eq)]
-pub enum GameOutcome {
-    /// The player successfully cracked the code.
-    Won { attempts: usize },
-    /// The player voluntarily quit midway through the game.
-    Quit,
-    /// The input stream closed (end-of-file reached).
-    Eof,
-}
-
-/// Plays a single interactive game of Master Mind using the provided target sequence.
-///
-/// Prompts the player for guesses, validates input, evaluates Bulls and Cows,
-/// and provides helpful feedback until victory, quit, or EOF.
-///
-/// Accepts generic `reader` and `writer` to allow clean automated integration testing.
-pub fn play_game<R: BufRead, W: Write>(
-    target: [u32; M],
+/// Prompts the user to select a difficulty level, returning `None` on EOF.
+pub fn select_difficulty<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
-) -> io::Result<GameOutcome> {
-    writeln!(
-        writer,
-        "A new secret code has been generated ({M} numbers between 1 and {N})."
-    )?;
-    writeln!(
-        writer,
-        "Enter {M} numbers separated by spaces (or type 'quit' to exit):"
-    )?;
+    color: ColorMode,
+) -> io::Result<Option<Difficulty>> {
+    let mut buffer = String::new();
+    loop {
+        render_difficulty_menu(writer, color)?;
+        buffer.clear();
+        let bytes_read = reader.read_line(&mut buffer)?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        let trimmed = buffer.trim();
+        if trimmed.is_empty() {
+            // Default to Medium if the user simply presses Enter
+            return Ok(Some(Difficulty::Medium));
+        }
+        if let Some(diff) = Difficulty::from_input(trimmed) {
+            return Ok(Some(diff));
+        }
+        writeln!(
+            writer,
+            "  {}",
+            color.red("Invalid choice. Please enter 1, 2, or 3.")
+        )?;
+    }
+}
 
-    let mut attempts = 0usize;
+/// Plays a single interactive round with the provided `GameSession`.
+///
+/// Prompts the player for guesses, validates input, tracks attempts against the limit,
+/// evaluates Bulls and Cows, renders feedback, and checks win/loss conditions.
+pub fn play_round<R: BufRead, W: Write>(
+    session: &mut GameSession,
+    reader: &mut R,
+    writer: &mut W,
+    cumulative_score: u32,
+    color: ColorMode,
+) -> io::Result<GameOutcome> {
     let mut line_buffer = String::new();
 
     loop {
-        write!(writer, "\nGuess #{}: ", attempts + 1)?;
+        render_status_panel(writer, session, cumulative_score, color)?;
+
+        write!(
+            writer,
+            "  Enter guess ({} numbers, 1–{}, or 'quit'): ",
+            session.config.sequence_length, session.config.max_value
+        )?;
         writer.flush()?;
 
         line_buffer.clear();
         let bytes_read = reader.read_line(&mut line_buffer)?;
         if bytes_read == 0 {
-            writeln!(writer, "\n[End of input reached. Exiting game.]")?;
+            writeln!(writer, "\n[End of input reached. Terminating session.]")?;
             return Ok(GameOutcome::Eof);
         }
 
-        match parse_guess(&line_buffer) {
+        match parse_guess(&line_buffer, &session.config) {
             Ok(guess) => {
-                attempts += 1;
-                let (bulls, cows) = score_guess(&target, &guess);
-                writeln!(
-                    writer,
-                    "Result: {bulls} Bull{}, {cows} Cow{}",
-                    if bulls == 1 { "" } else { "s" },
-                    if cows == 1 { "" } else { "s" }
-                )?;
+                let (eval, outcome) = session.submit_guess(guess);
+                render_feedback(writer, &eval, color)?;
 
-                if bulls == M {
-                    writeln!(
-                        writer,
-                        "\nCongratulations! You cracked the secret code {target:?} in {attempts} attempt{}!",
-                        if attempts == 1 { "" } else { "s" }
-                    )?;
-                    return Ok(GameOutcome::Won { attempts });
+                if let Some(outcome) = outcome {
+                    match &outcome {
+                        GameOutcome::Won { score, .. } => {
+                            render_win_summary(
+                                writer,
+                                score,
+                                cumulative_score + score.final_score,
+                                color,
+                            )?;
+                        }
+                        GameOutcome::Lost { secret, attempts } => {
+                            render_loss_summary(writer, secret, *attempts, color)?;
+                        }
+                        _ => {}
+                    }
+                    return Ok(outcome);
                 }
             }
             Err(GuessError::Quit) => {
-                writeln!(
-                    writer,
-                    "\nYou decided to quit. The secret code was: {target:?}."
-                )?;
-                return Ok(GameOutcome::Quit);
+                render_quit_summary(writer, &session.secret, color)?;
+                return Ok(GameOutcome::Quit {
+                    attempts: session.attempts_used,
+                    secret: session.secret.clone(),
+                });
             }
             Err(err) => {
-                // Invalid input: show error explanation and allow another attempt without penalty
-                writeln!(writer, "Error: {err}")?;
-                writeln!(writer, "Please enter your guess again.")?;
+                // Invalid input does NOT consume an attempt
+                render_error(writer, &err, color)?;
             }
         }
     }
 }
 
-/// Top-level interactive coordinator managing the welcome screen, game rounds, and replay options.
-pub fn run<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> io::Result<()> {
-    writeln!(writer, "================================================")?;
-    writeln!(writer, "     Welcome to Master Mind / Bulls & Cows      ")?;
-    writeln!(writer, "================================================")?;
-    writeln!(
-        writer,
-        "Game Configuration: M = {M} pegs, N = {N} max value (range 1..={N})"
-    )?;
-    writeln!(writer, "Rules:")?;
-    writeln!(writer, " - Bulls: Correct number in the correct position.")?;
-    writeln!(writer, " - Cows:  Correct number in an incorrect position.")?;
-    writeln!(
-        writer,
-        " - Repeated numbers are permitted in targets and guesses."
-    )?;
-    writeln!(writer, " - Type 'quit' at any prompt to exit.")?;
-    writeln!(writer, "================================================\n")?;
+/// Prompts the player with the post-game replay menu.
+pub fn ask_replay<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    current_difficulty: Difficulty,
+    color: ColorMode,
+) -> io::Result<Option<ReplayChoice>> {
+    let mut buffer = String::new();
+    loop {
+        render_replay_menu(writer, current_difficulty, color)?;
+        buffer.clear();
+        let bytes_read = reader.read_line(&mut buffer)?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        let trimmed = buffer.trim();
+        if trimmed.is_empty() {
+            // Default to playing again on the same difficulty
+            return Ok(Some(ReplayChoice::PlayAgainSame));
+        }
+        if let Some(choice) = ReplayChoice::from_input(trimmed) {
+            return Ok(Some(choice));
+        }
+        writeln!(
+            writer,
+            "  {}",
+            color.red("Invalid choice. Please enter 1, 2, or 3.")
+        )?;
+    }
+}
+
+/// Runs the Mastermind game loop with an explicit color mode.
+pub fn run_with_color<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    color: ColorMode,
+) -> io::Result<()> {
+    render_banner(writer, color)?;
+
+    let mut current_difficulty = match select_difficulty(reader, writer, color)? {
+        Some(diff) => diff,
+        None => return Ok(()),
+    };
+
+    let mut cumulative_score = 0u32;
 
     loop {
-        let target = generate_target();
-        let outcome = play_game(target, reader, writer)?;
+        let config = current_difficulty.config();
+        let secret = generate_target(&config);
+        let mut session = GameSession::new(config, secret);
+
+        let outcome = play_round(&mut session, reader, writer, cumulative_score, color)?;
 
         match outcome {
-            GameOutcome::Won { .. } => {
-                write!(writer, "\nWould you like to play another game? (y/n): ")?;
-                writer.flush()?;
-
-                let mut response = String::new();
-                let bytes_read = reader.read_line(&mut response)?;
-                if bytes_read == 0 {
-                    writeln!(writer, "\n[End of input reached. Goodbye!]")?;
-                    break;
-                }
-
-                let trimmed = response.trim();
-                if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
-                    writeln!(writer, "\nStarting a new game!\n")?;
-                    continue;
-                } else {
-                    writeln!(writer, "\nThank you for playing Master Mind! Goodbye.")?;
-                    break;
-                }
+            GameOutcome::Won { score, .. } => {
+                cumulative_score += score.final_score;
             }
-            GameOutcome::Quit => {
-                writeln!(writer, "Thank you for playing Master Mind! Goodbye.")?;
-                break;
+            GameOutcome::Lost { .. } | GameOutcome::Quit { .. } => {
+                // No points awarded for losses or quits
             }
             GameOutcome::Eof => {
+                break;
+            }
+        }
+
+        match ask_replay(reader, writer, current_difficulty, color)? {
+            Some(ReplayChoice::PlayAgainSame) => {
+                continue;
+            }
+            Some(ReplayChoice::ChangeDifficulty) => {
+                if let Some(new_diff) = select_difficulty(reader, writer, color)? {
+                    current_difficulty = new_diff;
+                } else {
+                    break;
+                }
+            }
+            Some(ReplayChoice::Exit) | None => {
+                writeln!(
+                    writer,
+                    "\nThank you for playing Mastermind! Final session score: {} pts. Goodbye!",
+                    cumulative_score
+                )?;
                 break;
             }
         }
     }
 
     Ok(())
+}
+
+/// Top-level entry point auto-detecting terminal color capabilities.
+pub fn run<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> io::Result<()> {
+    run_with_color(reader, writer, ColorMode::auto_detect())
 }
 
 fn main() {
@@ -349,556 +235,228 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
-
-    // -------------------------------------------------------------------------
-    // Deterministic Unit Tests for score_guess
-    // -------------------------------------------------------------------------
+    use std::io::Cursor;
 
     #[test]
-    fn test_all_bulls_unique() {
-        let target = [1, 2, 3, 4];
-        let guess = [1, 2, 3, 4];
-        assert_eq!(score_guess(&target, &guess), (4, 0));
-    }
+    fn test_end_to_end_single_win() {
+        let cfg = Difficulty::Medium.config();
+        let mut session = GameSession::new(cfg, vec![1, 2, 3, 4]);
 
-    #[test]
-    fn test_all_bulls_with_duplicates() {
-        let target = [2, 2, 5, 5];
-        let guess = [2, 2, 5, 5];
-        assert_eq!(score_guess(&target, &guess), (4, 0));
-
-        let all_same = [3, 3, 3, 3];
-        assert_eq!(score_guess(&all_same, &all_same), (4, 0));
-    }
-
-    #[test]
-    fn test_all_cows_complete_misplacement() {
-        let target = [1, 2, 3, 4];
-        let guess = [4, 3, 2, 1];
-        assert_eq!(score_guess(&target, &guess), (0, 4));
-
-        let guess_shifted = [2, 3, 4, 1];
-        assert_eq!(score_guess(&target, &guess_shifted), (0, 4));
-    }
-
-    #[test]
-    fn test_all_cows_with_duplicates() {
-        // Misplaced pairs: target has two 1s and two 2s; guess has two 2s and two 1s
-        let target = [1, 1, 2, 2];
-        let guess = [2, 2, 1, 1];
-        assert_eq!(score_guess(&target, &guess), (0, 4));
-
-        let target2 = [1, 2, 1, 2];
-        let guess2 = [2, 1, 2, 1];
-        assert_eq!(score_guess(&target2, &guess2), (0, 4));
-    }
-
-    #[test]
-    fn test_mixed_bulls_and_cows() {
-        let target = [1, 2, 3, 4];
-        // Pos 0 is Bull (1 == 1); Pos 1 and 2 are swapped Cows (3 vs 2); 5 is absent
-        let guess = [1, 3, 2, 5];
-        assert_eq!(score_guess(&target, &guess), (1, 2));
-
-        // Two Bulls, two Cows
-        let guess2 = [1, 2, 4, 3];
-        assert_eq!(score_guess(&target, &guess2), (2, 2));
-    }
-
-    #[test]
-    fn test_no_matches() {
-        let target = [1, 2, 3, 4];
-        let guess = [5, 6, 5, 6];
-        assert_eq!(score_guess(&target, &guess), (0, 0));
-    }
-
-    #[test]
-    fn test_repeated_values_in_target_single_in_guess() {
-        // Target has two 1s; guess only has one 1
-        let target = [1, 1, 2, 3];
-        let guess_exact = [1, 4, 5, 6]; // Bull at pos 0; no extra Cow
-        assert_eq!(score_guess(&target, &guess_exact), (1, 0));
-
-        // Peg 1 placed at pos 2 (target has 2 at pos 2, so no Bull) -> exactly 1 Cow
-        let guess_misplaced = [4, 5, 1, 6];
-        assert_eq!(score_guess(&target, &guess_misplaced), (0, 1));
-    }
-
-    #[test]
-    fn test_repeated_values_in_guess_single_in_target() {
-        // Target has one 1; guess has four 1s
-        let target = [1, 2, 3, 4];
-        let guess = [1, 1, 1, 1];
-        // Pos 0 is a Bull. The remaining three 1s in guess must NOT be counted as Cows!
-        assert_eq!(score_guess(&target, &guess), (1, 0));
-
-        // Target has one 1; guess has three 1s, none at index 0
-        let guess_no_bull = [5, 1, 1, 1];
-        // Only one of the 1s can match the single 1 in target
-        assert_eq!(score_guess(&target, &guess_no_bull), (0, 1));
-    }
-
-    #[test]
-    fn test_duplicate_overcounting_edge_cases() {
-        // Classic trap case: target [1, 2, 2, 3], guess [2, 2, 4, 2]
-        // Exact match at pos 1 (Bull for 2).
-        // Guess has two other 2s (pos 0 and 3). Target has only one unmatched 2 (pos 2).
-        // Only ONE Cow should be awarded, not two!
-        let target = [1, 2, 2, 3];
-        let guess = [2, 2, 4, 2];
-        assert_eq!(score_guess(&target, &guess), (1, 1));
-
-        // Target has two 1s and two 2s; guess has 3, 3, 1, 1 (two misplaced 1s, no Bulls)
-        let target2 = [1, 1, 2, 2];
-        let guess2 = [3, 4, 1, 1];
-        assert_eq!(score_guess(&target2, &guess2), (0, 2));
-
-        // Target has two 1s; guess has three 1s (one Bull, one Cow, one ignored)
-        let target3 = [1, 1, 3, 4];
-        let guess3 = [1, 5, 1, 1];
-        assert_eq!(score_guess(&target3, &guess3), (1, 1));
-    }
-
-    #[test]
-    fn test_outside_matching_set() {
-        let target = [1, 2, 3, 4];
-        let guess = [6, 6, 6, 6];
-        assert_eq!(score_guess(&target, &guess), (0, 0));
-    }
-
-    // -------------------------------------------------------------------------
-    // Reference Implementation for Randomized Differential Testing
-    // -------------------------------------------------------------------------
-
-    /// Independent reference scorer based on multiset frequency counting.
-    ///
-    /// Algorithm:
-    /// 1. Exact matches at identical indices are counted as Bulls.
-    /// 2. For each distinct peg value v in 1..=N, the total possible matches
-    ///    between target and guess is min(count_target(v), count_guess(v)).
-    /// 3. The total matches across all values equals (bulls + cows).
-    /// 4. Therefore, cows = total_matches - bulls.
-    fn reference_score_guess(target: &[u32], guess: &[u32]) -> (usize, usize) {
-        let mut bulls = 0;
-        let mut target_freq = [0usize; (N + 1) as usize];
-        let mut guess_freq = [0usize; (N + 1) as usize];
-
-        for i in 0..M {
-            if target[i] == guess[i] {
-                bulls += 1;
-            }
-            if target[i] <= N {
-                target_freq[target[i] as usize] += 1;
-            }
-            if guess[i] <= N {
-                guess_freq[guess[i] as usize] += 1;
-            }
-        }
-
-        let mut total_matches = 0;
-        for v in 1..=(N as usize) {
-            total_matches += target_freq[v].min(guess_freq[v]);
-        }
-
-        let cows = total_matches - bulls;
-        (bulls, cows)
-    }
-
-    #[test]
-    fn test_reference_scorer_matches_known_cases() {
-        let cases = [
-            ([1, 2, 3, 4], [1, 2, 3, 4], (4, 0)),
-            ([1, 2, 3, 4], [4, 3, 2, 1], (0, 4)),
-            ([1, 2, 3, 4], [1, 3, 2, 5], (1, 2)),
-            ([1, 2, 2, 3], [2, 2, 4, 2], (1, 1)),
-            ([1, 2, 3, 4], [1, 1, 1, 1], (1, 0)),
-            ([1, 1, 2, 2], [2, 2, 1, 1], (0, 4)),
-            ([5, 6, 5, 6], [1, 2, 3, 4], (0, 0)),
-        ];
-
-        for (target, guess, expected) in cases {
-            assert_eq!(reference_score_guess(&target, &guess), expected);
-            assert_eq!(score_guess(&target, &guess), expected);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Randomized Differential Testing with Seeded PRNG
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_randomized_differential_scoring() {
-        // Seeded RNG ensures 100% deterministic reproducibility across all test runs
-        const SEED: u64 = 42;
-        const ITERATIONS: usize = 10_000;
-
-        let mut rng = StdRng::seed_from_u64(SEED);
-
-        for iteration in 0..ITERATIONS {
-            let mut target = [0u32; M];
-            let mut guess = [0u32; M];
-
-            for i in 0..M {
-                target[i] = rng.gen_range(1..=N);
-                guess[i] = rng.gen_range(1..=N);
-            }
-
-            let actual = score_guess(&target, &guess);
-            let expected = reference_score_guess(&target, &guess);
-
-            // Invariant 1: Two-pass marker algorithm matches frequency-counting reference
-            assert_eq!(
-                actual, expected,
-                "Mismatch on iteration {iteration}: target={target:?}, guess={guess:?}"
-            );
-
-            let (bulls, cows) = actual;
-
-            // Invariant 2: Individual counts cannot exceed sequence length M
-            assert!(
-                bulls <= M,
-                "Bulls ({bulls}) exceeded M ({M}) on target={target:?}, guess={guess:?}"
-            );
-            assert!(
-                cows <= M,
-                "Cows ({cows}) exceeded M ({M}) on target={target:?}, guess={guess:?}"
-            );
-
-            // Invariant 3: Total matches cannot exceed sequence length M
-            assert!(
-                bulls + cows <= M,
-                "Total matches ({}) exceeded M ({M}) on target={target:?}, guess={guess:?}",
-                bulls + cows
-            );
-
-            // Invariant 4: Self-comparison yields exactly (M, 0)
-            assert_eq!(
-                score_guess(&target, &target),
-                (M, 0),
-                "Self-comparison invariant failed for target={target:?}"
-            );
-            assert_eq!(
-                score_guess(&guess, &guess),
-                (M, 0),
-                "Self-comparison invariant failed for guess={guess:?}"
-            );
-
-            // Invariant 5: Multiset permutation check: if guess is a permutation of target,
-            // then total matches (bulls + cows) must equal exactly M.
-            let mut permuted_target = target;
-            // Simple deterministic permutation: reverse target
-            permuted_target.reverse();
-            let (p_bulls, p_cows) = score_guess(&target, &permuted_target);
-            assert_eq!(
-                p_bulls + p_cows,
-                M,
-                "Permutation invariant failed: target={target:?}, permuted={permuted_target:?}"
-            );
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Unit Tests for parse_guess
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_parse_guess_valid() {
-        assert_eq!(parse_guess("1 2 3 4"), Ok([1, 2, 3, 4]));
-        assert_eq!(parse_guess("2 2 5 5"), Ok([2, 2, 5, 5]));
-        assert_eq!(parse_guess("6 1 6 1"), Ok([6, 1, 6, 1]));
-    }
-
-    #[test]
-    fn test_parse_guess_whitespace_variations() {
-        // Multiple spaces
-        assert_eq!(parse_guess("1   2    3     4"), Ok([1, 2, 3, 4]));
-        // Leading and trailing spaces
-        assert_eq!(parse_guess("   1 2 3 4   "), Ok([1, 2, 3, 4]));
-        // Tabs and mixed whitespace
-        assert_eq!(parse_guess("\t1 \t 2  3\t 4\n"), Ok([1, 2, 3, 4]));
-    }
-
-    #[test]
-    fn test_parse_guess_quit_command() {
-        assert_eq!(parse_guess("quit"), Err(GuessError::Quit));
-        assert_eq!(parse_guess("QUIT"), Err(GuessError::Quit));
-        assert_eq!(parse_guess("Quit"), Err(GuessError::Quit));
-        assert_eq!(parse_guess("  quit  \t"), Err(GuessError::Quit));
-    }
-
-    #[test]
-    fn test_parse_guess_empty_input() {
-        assert_eq!(parse_guess(""), Err(GuessError::EmptyInput));
-        assert_eq!(parse_guess("   "), Err(GuessError::EmptyInput));
-        assert_eq!(parse_guess("\t  \n"), Err(GuessError::EmptyInput));
-    }
-
-    #[test]
-    fn test_parse_guess_invalid_length() {
-        // Too few tokens
-        assert_eq!(
-            parse_guess("1 2 3"),
-            Err(GuessError::InvalidLength {
-                expected: 4,
-                actual: 3
-            })
-        );
-        assert_eq!(
-            parse_guess("1"),
-            Err(GuessError::InvalidLength {
-                expected: 4,
-                actual: 1
-            })
-        );
-
-        // Too many tokens
-        assert_eq!(
-            parse_guess("1 2 3 4 5"),
-            Err(GuessError::InvalidLength {
-                expected: 4,
-                actual: 5
-            })
-        );
-        assert_eq!(
-            parse_guess("1 2 3 4 5 6"),
-            Err(GuessError::InvalidLength {
-                expected: 4,
-                actual: 6
-            })
-        );
-    }
-
-    #[test]
-    fn test_parse_guess_non_integer_tokens() {
-        assert_eq!(
-            parse_guess("1 2 abc 4"),
-            Err(GuessError::NonInteger("abc".to_string()))
-        );
-        assert_eq!(
-            parse_guess("1 2.5 3 4"),
-            Err(GuessError::NonInteger("2.5".to_string()))
-        );
-        assert_eq!(
-            parse_guess("1 -2 3 4"),
-            Err(GuessError::NonInteger("-2".to_string()))
-        );
-    }
-
-    #[test]
-    fn test_parse_guess_out_of_range() {
-        // Below minimum (0 < 1)
-        assert_eq!(
-            parse_guess("0 2 3 4"),
-            Err(GuessError::OutOfRange {
-                value: 0,
-                min: 1,
-                max: 6
-            })
-        );
-
-        // Above maximum (7 > 6)
-        assert_eq!(
-            parse_guess("1 2 7 4"),
-            Err(GuessError::OutOfRange {
-                value: 7,
-                min: 1,
-                max: 6
-            })
-        );
-
-        // High value
-        assert_eq!(
-            parse_guess("1 2 3 99"),
-            Err(GuessError::OutOfRange {
-                value: 99,
-                min: 1,
-                max: 6
-            })
-        );
-    }
-
-    #[test]
-    fn test_guess_error_display() {
-        // Verify user-facing error message formatting
-        assert_eq!(GuessError::Quit.to_string(), "Game quit requested.");
-        assert_eq!(
-            GuessError::EmptyInput.to_string(),
-            "Input was empty. Please enter 4 numbers separated by spaces."
-        );
-        assert_eq!(
-            GuessError::InvalidLength {
-                expected: 4,
-                actual: 2
-            }
-            .to_string(),
-            "Invalid number of values: expected 4, but received 2."
-        );
-        assert_eq!(
-            GuessError::NonInteger("xyz".to_string()).to_string(),
-            "Invalid token 'xyz': must be a positive integer."
-        );
-        assert_eq!(
-            GuessError::OutOfRange {
-                value: 9,
-                min: 1,
-                max: 6
-            }
-            .to_string(),
-            "Value 9 is out of range: each number must be between 1 and 6 (inclusive)."
-        );
-    }
-
-    // -------------------------------------------------------------------------
-    // Unit Tests for generate_target
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_generate_target_length_and_range() {
-        for _ in 0..1_000 {
-            let target = generate_target();
-            assert_eq!(target.len(), M);
-            for peg in target {
-                assert!(
-                    (1..=N).contains(&peg),
-                    "Target peg {peg} out of range 1..={N}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_generate_target_allows_repetitions() {
-        // Run enough trials to guarantee seeing duplicates with high statistical probability
-        let mut found_duplicate = false;
-        for _ in 0..500 {
-            let target = generate_target();
-            let mut unique = target.to_vec();
-            unique.sort_unstable();
-            unique.dedup();
-            if unique.len() < M {
-                found_duplicate = true;
-                break;
-            }
-        }
-        assert!(
-            found_duplicate,
-            "Expected random generation to allow repeated numbers"
-        );
-    }
-
-    #[test]
-    fn test_generate_target_deterministic_with_seeded_rng() {
-        let mut rng1 = StdRng::seed_from_u64(9999);
-        let mut rng2 = StdRng::seed_from_u64(9999);
-
-        let target1 = generate_target_with_rng(&mut rng1);
-        let target2 = generate_target_with_rng(&mut rng2);
-
-        assert_eq!(target1, target2);
-    }
-
-    // -------------------------------------------------------------------------
-    // Integration Tests for Interactive Gameplay and Game Loop
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_play_game_win_first_guess() {
-        let target = [1, 2, 3, 4];
-        let input_bytes = b"1 2 3 4\n";
-        let mut reader = std::io::Cursor::new(input_bytes);
+        // Input: 1 wrong guess ("1 2 4 3"), 1 correct guess ("1 2 3 4")
+        let input_bytes = b"1 2 4 3\n1 2 3 4\n";
+        let mut reader = Cursor::new(input_bytes);
         let mut output = Vec::new();
 
-        let outcome = play_game(target, &mut reader, &mut output).unwrap();
+        let outcome = play_round(
+            &mut session,
+            &mut reader,
+            &mut output,
+            0,
+            ColorMode::Disabled,
+        )
+        .unwrap();
 
-        assert_eq!(outcome, GameOutcome::Won { attempts: 1 });
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Result: 4 Bulls, 0 Cows"));
-        assert!(output_str.contains("Congratulations! You cracked the secret code"));
+        match outcome {
+            GameOutcome::Won { attempts, score } => {
+                assert_eq!(attempts, 2);
+                assert_eq!(score.final_score, 356); // 100 * 2.0 * (1 + 7/9) = 355.55... -> 356
+            }
+            _ => panic!("Expected GameOutcome::Won"),
+        }
+
+        let out_str = String::from_utf8(output).unwrap();
+        assert!(out_str.contains("VICTORY! CODE CRACKED"));
+        assert!(out_str.contains("+356 pts"));
     }
 
     #[test]
-    fn test_play_game_multi_guess_with_invalid_attempts() {
-        let target = [1, 2, 3, 4];
-        // Stream contains invalid inputs interspersed with valid guesses:
-        // 1. Invalid length ("1 2") -> error, attempts = 0
-        // 2. Out of range ("1 2 9 4") -> error, attempts = 0
-        // 3. Non-integer ("1 2 x 4") -> error, attempts = 0
-        // 4. Empty line ("") -> error, attempts = 0
-        // 5. Valid guess ("2 1 4 3") -> score: 0 Bulls, 4 Cows, attempts = 1
-        // 6. Winning guess ("1 2 3 4") -> score: 4 Bulls, 0 Cows, attempts = 2
-        let input_bytes = b"1 2\n1 2 9 4\n1 2 x 4\n   \n2 1 4 3\n1 2 3 4\n";
-        let mut reader = std::io::Cursor::new(input_bytes);
+    fn test_end_to_end_attempt_limit_loss() {
+        let cfg = Difficulty::Easy.config(); // L = 10, M = 3, N = 4
+        let mut session = GameSession::new(cfg, vec![1, 2, 3]);
+
+        // 10 incorrect guesses
+        let mut input = Vec::new();
+        for _ in 0..10 {
+            input.extend_from_slice(b"4 4 4\n");
+        }
+        let mut reader = Cursor::new(input);
         let mut output = Vec::new();
 
-        let outcome = play_game(target, &mut reader, &mut output).unwrap();
+        let outcome = play_round(
+            &mut session,
+            &mut reader,
+            &mut output,
+            0,
+            ColorMode::Disabled,
+        )
+        .unwrap();
 
-        assert_eq!(outcome, GameOutcome::Won { attempts: 2 });
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Invalid number of values"));
-        assert!(output_str.contains("Value 9 is out of range"));
-        assert!(output_str.contains("Invalid token 'x'"));
-        assert!(output_str.contains("Input was empty"));
-        assert!(output_str.contains("Result: 0 Bulls, 4 Cows"));
-        assert!(output_str.contains("in 2 attempts!"));
+        match outcome {
+            GameOutcome::Lost { attempts, secret } => {
+                assert_eq!(attempts, 10);
+                assert_eq!(secret, vec![1, 2, 3]);
+            }
+            _ => panic!("Expected GameOutcome::Lost"),
+        }
+
+        let out_str = String::from_utf8(output).unwrap();
+        assert!(out_str.contains("GAME OVER - ATTEMPTS EXHAUSTED"));
+        assert!(out_str.contains("The secret code was: [1 2 3]"));
     }
 
     #[test]
-    fn test_play_game_quit_midway() {
-        let target = [1, 2, 3, 4];
-        let input_bytes = b"2 2 5 5\nquit\n";
-        let mut reader = std::io::Cursor::new(input_bytes);
+    fn test_end_to_end_win_on_final_attempt() {
+        let cfg = Difficulty::Hard.config(); // L = 8, M = 5, N = 8
+        let mut session = GameSession::new(cfg, vec![1, 2, 3, 4, 5]);
+
+        let mut input = Vec::new();
+        // 7 wrong guesses
+        for _ in 0..7 {
+            input.extend_from_slice(b"8 8 8 8 8\n");
+        }
+        // 8th guess: correct!
+        input.extend_from_slice(b"1 2 3 4 5\n");
+
+        let mut reader = Cursor::new(input);
         let mut output = Vec::new();
 
-        let outcome = play_game(target, &mut reader, &mut output).unwrap();
+        let outcome = play_round(
+            &mut session,
+            &mut reader,
+            &mut output,
+            0,
+            ColorMode::Disabled,
+        )
+        .unwrap();
 
-        assert_eq!(outcome, GameOutcome::Quit);
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Result: 1 Bull, 0 Cows"));
-        assert!(output_str.contains("You decided to quit. The secret code was: [1, 2, 3, 4]."));
+        match outcome {
+            GameOutcome::Won { attempts, score } => {
+                assert_eq!(attempts, 8);
+                assert_eq!(score.final_score, 400); // 100 * 4.0 * 1.0 = 400
+            }
+            _ => panic!("Expected win on final attempt"),
+        }
+
+        let out_str = String::from_utf8(output).unwrap();
+        assert!(out_str.contains("VICTORY! CODE CRACKED"));
     }
 
     #[test]
-    fn test_play_game_eof_handling() {
-        let target = [1, 2, 3, 4];
-        // Empty stream simulates immediate EOF (closed stdin pipe)
-        let input_bytes = b"";
-        let mut reader = std::io::Cursor::new(input_bytes);
+    fn test_invalid_input_does_not_consume_attempts() {
+        let cfg = Difficulty::Easy.config(); // L = 10, M = 3, N = 4
+        let mut session = GameSession::new(cfg, vec![1, 2, 3]);
+
+        // 4 invalid inputs, followed by correct guess
+        let input_bytes = b"1 2\n1 2 9\n1 2 x\n   \n1 2 3\n";
+        let mut reader = Cursor::new(input_bytes);
         let mut output = Vec::new();
 
-        let outcome = play_game(target, &mut reader, &mut output).unwrap();
+        let outcome = play_round(
+            &mut session,
+            &mut reader,
+            &mut output,
+            0,
+            ColorMode::Disabled,
+        )
+        .unwrap();
 
-        assert_eq!(outcome, GameOutcome::Eof);
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("End of input reached"));
+        match outcome {
+            GameOutcome::Won { attempts, score } => {
+                assert_eq!(attempts, 1);
+                assert_eq!(score.final_score, 190); // 100 * 1.0 * 1.9 = 190
+            }
+            _ => panic!("Expected win with 1 consumed attempt"),
+        }
     }
 
     #[test]
-    fn test_run_session_quit_immediately() {
+    fn test_quit_midway() {
+        let cfg = Difficulty::Medium.config();
+        let mut session = GameSession::new(cfg, vec![1, 2, 3, 4]);
+
         let input_bytes = b"quit\n";
-        let mut reader = std::io::Cursor::new(input_bytes);
+        let mut reader = Cursor::new(input_bytes);
         let mut output = Vec::new();
 
-        let res = run(&mut reader, &mut output);
+        let outcome = play_round(
+            &mut session,
+            &mut reader,
+            &mut output,
+            0,
+            ColorMode::Disabled,
+        )
+        .unwrap();
+
+        match outcome {
+            GameOutcome::Quit { attempts, secret } => {
+                assert_eq!(attempts, 0);
+                assert_eq!(secret, vec![1, 2, 3, 4]);
+            }
+            _ => panic!("Expected GameOutcome::Quit"),
+        }
+    }
+
+    #[test]
+    fn test_select_difficulty_valid_and_invalid() {
+        let input_bytes = b"invalid\n4\n1\n";
+        let mut reader = Cursor::new(input_bytes);
+        let mut output = Vec::new();
+
+        let diff = select_difficulty(&mut reader, &mut output, ColorMode::Disabled).unwrap();
+        assert_eq!(diff, Some(Difficulty::Easy));
+
+        let out_str = String::from_utf8(output).unwrap();
+        assert!(out_str.contains("Invalid choice"));
+    }
+
+    #[test]
+    fn test_ask_replay_choices() {
+        let input_same = b"1\n";
+        let mut r1 = Cursor::new(input_same);
+        let mut out1 = Vec::new();
+        assert_eq!(
+            ask_replay(&mut r1, &mut out1, Difficulty::Easy, ColorMode::Disabled).unwrap(),
+            Some(ReplayChoice::PlayAgainSame)
+        );
+
+        let input_change = b"2\n";
+        let mut r2 = Cursor::new(input_change);
+        let mut out2 = Vec::new();
+        assert_eq!(
+            ask_replay(&mut r2, &mut out2, Difficulty::Easy, ColorMode::Disabled).unwrap(),
+            Some(ReplayChoice::ChangeDifficulty)
+        );
+
+        let input_exit = b"3\n";
+        let mut r3 = Cursor::new(input_exit);
+        let mut out3 = Vec::new();
+        assert_eq!(
+            ask_replay(&mut r3, &mut out3, Difficulty::Easy, ColorMode::Disabled).unwrap(),
+            Some(ReplayChoice::Exit)
+        );
+    }
+
+    #[test]
+    fn test_run_session_difficulty_change_and_exit() {
+        // Initial difficulty: Easy (1)
+        // Round 1: quit immediately
+        // Replay: Change difficulty (2)
+        // New difficulty: Medium (2)
+        // Round 2: quit immediately
+        // Replay: Exit (3)
+        let input_bytes = b"1\nquit\n2\n2\nquit\n3\n";
+        let mut reader = Cursor::new(input_bytes);
+        let mut output = Vec::new();
+
+        let res = run_with_color(&mut reader, &mut output, ColorMode::Disabled);
         assert!(res.is_ok());
 
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Welcome to Master Mind / Bulls & Cows"));
-        assert!(output_str.contains("Thank you for playing Master Mind! Goodbye."));
-    }
-
-    #[test]
-    fn test_run_session_replay_prompt_no() {
-        // Round 1: immediate win (assuming we could predict target? Wait, run() generates a random target)
-        // For testing run()'s replay prompt, testing quit is fully deterministic.
-        let input_bytes = b"quit\n";
-        let mut reader = std::io::Cursor::new(input_bytes);
-        let mut output = Vec::new();
-
-        let res = run(&mut reader, &mut output);
-        assert!(res.is_ok());
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Thank you for playing Master Mind! Goodbye."));
+        let out_str = String::from_utf8(output).unwrap();
+        assert!(out_str.contains("M A S T E R M I N D"));
+        assert!(out_str.contains("Select Difficulty"));
+        assert!(out_str.contains("You quit the round"));
+        assert!(out_str.contains("Final session score: 0 pts. Goodbye!"));
+        // Confirm no ANSI codes leaked into plain text mode
+        assert!(!out_str.contains("\x1b["));
     }
 }
