@@ -495,6 +495,7 @@ Integrate in-game rules and instructions into the opening banner, document the e
    - `595d5d0`: `feat(ui): display game rules and description in initial welcome banner`
    - `2a1899c`: `docs: add refactoring analysis, Mermaid diagrams, and module reference to design doc`
    - `2f5b1ec`: `docs: add Mermaid state transitions and update welcome rules in README`
+   - `a675b72`: `fix(docs): quote bracketed and special-character Mermaid node labels in design doc`
 6. **Verification**:
    - `cargo fmt --check`: 0 diffs.
    - `cargo check`: 0 warnings.
