@@ -250,12 +250,64 @@ Testing is organized into three distinct tiers:
 
 ---
 
-## 12. Implementation Deviations
+## 12. Implementation Deviations (Initial Baseline)
 
-No fundamental architectural deviations occurred from the pre-implementation baseline:
+No fundamental architectural deviations occurred from the pre-implementation baseline during the initial phase:
 - Fixed-size arrays `[u32; M]` were strictly maintained for targets and validated guesses.
 - Temporary `Vec<u32>` was used exclusively during token parsing before conversion into `[u32; M]`.
 - Scoring algorithm cleanly utilized stack-allocated boolean markers `[bool; M]` with immutable slice borrowing `&[u32]`.
 - Functions encapsulated all substantive logic; macros were restricted to formatting and test assertions.
-- The two minor test assertion adjustments during Phase 2, Steps 2–4 (correcting inadvertent exact index placements in unit test inputs) were documented in `docs/DEV_LOG.md` and `docs/TESTING.md`.
+
+---
+
+## 13. Post-Implementation Design Update: Difficulty, Scoring & UI Extension
+
+This section documents the architectural evolution of Mastermind from compile-time constants to runtime-configurable difficulty levels, limited attempts, a difficulty-aware scoring formula, and an ANSI terminal interface.
+
+### 13.1 Transition from Fixed-Size Arrays to Vectors
+In the original baseline, sequence length $M=4$ was a compile-time constant, making fixed-size arrays `[u32; 4]` appropriate. With runtime difficulty levels (Easy: $M=3$, Medium: $M=4$, Hard: $M=5$), $M$ is no longer known at compile time.
+- **Data Structure Selection**: `Vec<u32>` is now used for storing secret target sequences and player guesses.
+- **Slice Interface Continuity**: Crucially, `score_guess(target: &[u32], guess: &[u32]) -> (usize, usize)` continues to borrow slices `&[u32]`. This demonstrates the power of Rust's borrowing model: moving the underlying container from arrays `[u32; M]` to `Vec<u32>` required **zero signature changes** to `score_guess`.
+- **Dynamic Matching Markers**: Inside `score_guess`, boolean markers are allocated based on the slice length (`vec![false; len]`), preserving duplicate safety across all difficulty tiers.
+
+### 13.2 Centralized Difficulty Configuration
+Rather than scattering length, range, and attempt constants across modules, difficulty settings are centralized in `src/config.rs`:
+
+| Level | Sequence Length ($M$) | Peg Range ($N$) | Max Valid Attempts ($L$) | Difficulty Multiplier | Score Range ($A=L \to A=1$) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Easy** | 3 | $1..=4$ | 10 | 1.0× | 100 – 190 pts |
+| **Medium** | 4 | $1..=6$ | 9 | 2.0× | 200 – 378 pts |
+| **Hard** | 5 | $1..=8$ | 8 | 4.0× | 400 – 750 pts |
+
+### 13.3 Attempt Limits & Game State Machine
+The game session (`GameSession` in `src/game.rs`) enforces strict attempt accounting:
+1. **Invalid Guesses Free**: Non-integer tokens, incorrect token counts, and out-of-range values produce informative diagnostics and **never** consume an attempt.
+2. **Valid Guesses Consume 1 Attempt**: Validated guesses increment `attempts_used`.
+3. **Win-Before-Loss Edge Case**: On the final allowed attempt ($A = L$), if all pegs match ($bulls = M$), the player **wins**. A loss is declared only if the final attempt fails to solve the code.
+4. **Target Revelation**: Losses and voluntary quits reveal the secret code without awarding victory points.
+
+### 13.4 Score and Multiplier Mathematics
+The scoring system rewards both difficulty and attempt efficiency:
+$$\text{attempt\_multiplier} = 1.0 + \frac{L - A}{L}$$
+$$\text{final\_score} = \operatorname{round}(\text{BASE\_POINTS} \times \text{difficulty\_multiplier} \times \text{attempt\_multiplier})$$
+where $\text{BASE\_POINTS} = 100$, $A$ is the 1-based attempt number on win ($1 \le A \le L$), and $L$ is max attempts.
+- **Strictly Non-Overlapping Score Bands**: By setting difficulty multipliers to 1.0×, 2.0×, and 4.0×, the score bands are strictly stratified:
+  $$\text{Easy (100–190)} < \text{Medium (200–378)} < \text{Hard (400–750)}$$
+- **Session Accumulation**: Cumulative score is tracked across winning rounds within a session and resets only on program exit.
+
+### 13.5 UI Layer & Plain-Text Fallback
+The UI is strictly decoupled in `src/ui.rs`:
+- Uses Unicode box-drawing (`╭───╮`, `│`, `╰───╯`) and styled status panels.
+- Visual attempt progress bar: `[████████░░] 8 remaining`.
+- **Zero-Dependency ANSI Handling**: Implemented directly with standard escape sequences, with reliable `\x1b[0m` resets to prevent color leakage.
+- **`NO_COLOR` Compliance**: Inspects `std::env::var_os("NO_COLOR")`. When set (or when running non-interactive automated tests), `ColorMode::Disabled` outputs pure plain text with zero escape characters.
+
+### 13.6 Module Architecture
+The monolithic `main.rs` was decomposed into 5 focused modules:
+- `src/config.rs`: `Difficulty`, `DifficultyConfig`, constants.
+- `src/scoring.rs`: `score_guess`, `calculate_score`, `ScoreBreakdown`.
+- `src/game.rs`: `parse_guess`, `generate_target`, `GameSession`, `GameOutcome`, `ReplayChoice`.
+- `src/ui.rs`: `ColorMode`, box drawing, progress bars, feedback, summaries.
+- `src/main.rs`: High-level session coordination, replay loop, and integration tests.
+
 
