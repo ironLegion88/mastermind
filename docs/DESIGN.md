@@ -244,8 +244,9 @@ Testing is organized into three distinct tiers:
 
 ## 11. Limitations and Future Extensions
 - **Fixed Compile-Time $M$ and $N$**: Currently requires re-compilation to alter length or peg range. Future extension could support runtime difficulty settings (Easy: $M=4, N=6$; Hard: $M=6, N=8$) by adapting representations to `Vec<u32>`.
-- **Fixed Number of Attempts**: The game ends after a fixed number of attempts (default 10). Future extension could support dynamic attempt limits based on game difficulty or user preferences with an attempt-based score multiplier.
+- **Unlimited Guess Attempts**: In the current implementation, players have unlimited guesses until they crack the code or enter `quit`. A future extension could introduce an optional maximum attempt cutoff (e.g., 10 attempts) as a difficulty modifier or competitive challenge mode.
 - **Terminal UI**: Standard plain-text terminal output. Could optionally support ANSI terminal colors in future versions.
+
 
 ---
 

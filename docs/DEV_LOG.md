@@ -311,7 +311,24 @@ Create user guide (`README.md`), finalize design documentation (`docs/DESIGN.md`
 
 ### Status & Next Steps
 - Project implementation, testing, and documentation are complete and verified.
-- Commit Hash: `4363106`
+- Commit Hash: `c4eed2c`
+
+---
+
+## 2026-10-12: Post-Implementation Review — Clarification on Unlimited Guesses
+
+### Objective
+Review and align project documentation regarding guess attempts to explicitly state that guesses are unlimited in the current implementation.
+
+### Actions & Design Decisions
+1. **Design Documentation (`docs/DESIGN.md`)**:
+   - Corrected Section 11 (Limitations and Future Extensions). Replaced an erroneous draft note implying a 10-attempt limit with an explicit statement that guess attempts are unlimited, preserving optional maximum attempt limits as a future challenge extension.
+2. **User Guide (`README.md`)**:
+   - Explicitly listed `Guess Attempts: Unlimited` under the Current Game Configuration section.
+3. **Verification**:
+   - Verified that code in `src/main.rs` continues looping until win, quit, or EOF as expected.
+   - All tests remain valid and passing.
+
 
 
 

@@ -17,6 +17,7 @@ The computer generates a secret target sequence of $M$ integers, each in the inc
 - **Sequence Length ($M$)**: `4` pegs
 - **Peg Range ($N$)**: `1..=6` (integers from 1 through 6)
 - **Repetitions Allowed**: Yes (both in target and in guesses)
+- **Guess Attempts**: Unlimited (players can guess until solved or `quit`)
 
 ---
 
