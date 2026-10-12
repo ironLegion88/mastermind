@@ -48,6 +48,28 @@ All difficulty settings are centrally maintained in `src/config.rs` as the singl
    - `2`: Change difficulty setting.
    - `3` (or `q`): Exit the game session.
 
+### Game State Transitions
+
+```mermaid
+stateDiagram-v2
+    [*] --> InProgress: Start Round (attempts = 0)
+    InProgress --> InProgress: Invalid Guess (attempts unchanged)
+    InProgress --> Evaluating: Valid Guess (attempts += 1)
+    InProgress --> Quit: Player types 'quit' (reveals secret)
+    InProgress --> Eof: Stream closed (EOF)
+    
+    Evaluating --> Won: bulls == M (Victory!)
+    Evaluating --> Lost: bulls < M AND attempts == L (Loss)
+    Evaluating --> InProgress: bulls < M AND attempts < L (Next Attempt)
+    
+    Won --> ReplayMenu: Calculate & award points
+    Lost --> ReplayMenu: Reveal secret code
+    Quit --> ReplayMenu: Reveal secret code
+    ReplayMenu --> InProgress: Play again (same / new difficulty)
+    ReplayMenu --> [*]: Exit session
+    Eof --> [*]: Exit session
+```
+
 ---
 
 ## 4. Scoring & Multiplier System
@@ -96,7 +118,7 @@ The program tracks cumulative points across successful rounds within a running s
 ## 5. Terminal Presentation & ANSI Support
 
 The user interface features a clean, restrained visual theme:
-- Prominent welcome panel with Unicode box-drawing characters (`╭───╮`, `│`, `╰───╯`).
+- Prominent welcome panel with Unicode box-drawing characters (`╭───╮`, `│`, `╰───╯`) and integrated How to Play rules.
 - Status panels displaying difficulty, code length, value range, attempts used, and session score.
 - Dynamic attempt progress bar (`[████████░░] 8 remaining`).
 - Color-coded feedback for Bulls (green), Cows (yellow), errors (red), victories (bold green), and losses (red).
