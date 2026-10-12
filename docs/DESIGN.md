@@ -18,7 +18,7 @@ The objective of this project is to implement a robust, terminal-based Bulls and
 - `quit` command must be recognized immediately to exit gracefully.
 - End-of-file (EOF) on standard input must be handled cleanly.
 - After a game finishes (win or quit), replay options should allow starting a new game or exiting.
-- Clear, idiomatic Rust appropriate for educational inspection and verification.
+- Clear, idiomatic Rust appropriate for inspection and verification.
 
 ---
 
@@ -309,5 +309,239 @@ The monolithic `main.rs` was decomposed into 5 focused modules:
 - `src/game.rs`: `parse_guess`, `generate_target`, `GameSession`, `GameOutcome`, `ReplayChoice`.
 - `src/ui.rs`: `ColorMode`, box drawing, progress bars, feedback, summaries.
 - `src/main.rs`: High-level session coordination, replay loop, and integration tests.
+
+---
+
+## 14. Comprehensive Refactoring Analysis of `main.rs`
+
+This section details the evolutionary refactoring of the original monolithic `src/main.rs` into the modular architecture, detailing exactly what was preserved, what was changed, what was added, and the rationale for each decision.
+
+### 14.1 Refactoring Matrix
+
+| Subsystem | Original Baseline (`main.rs`) | Current Implementation | Status | Rationale |
+| :--- | :--- | :--- | :--- | :--- |
+| **Bulls & Cows Matching** | `score_guess(&[u32], &[u32]) -> (usize, usize)` with stack markers `[bool; M]` | `scoring::score_guess(&[u32], &[u32]) -> (usize, usize)` with `vec![false; len]` | **Preserved in core logic**; markers adapted | Slices preserve immutability and zero-copy borrowing; dynamically sized markers support any sequence length $M$. |
+| **Sequence Storage** | Stack arrays `[u32; M]` | Heap vectors `Vec<u32>` | **Changed** | $M$ is selected at runtime ($M \in \{3, 4, 5\}$); Rust fixed arrays require compile-time constants. |
+| **Guess Parsing** | `parse_guess(input: &str) -> Result<[u32; M], GuessError>` | `game::parse_guess(input: &str, config: &DifficultyConfig) -> Result<Vec<u32>, GuessError>` | **Adapted** | Preserved whitespace splitting, quit detection, and error enum; dynamically parameterized bounds against active config. |
+| **Target Generation** | `generate_target() -> [u32; M]` with `generate_target_with_rng` | `game::generate_target(config: &DifficultyConfig) -> Vec<u32>` with generic RNG injection | **Adapted** | Preserved uniform sampling and dependency injection for seeded testing; parameterized length and range. |
+| **Reference Scorer** | `reference_score_guess` with multiset frequency counting | `scoring::reference_score_guess` | **Preserved verbatim** | Preserved independent mathematical oracle for randomized differential testing. |
+| **Differential Tests** | 10,000 runs on fixed $M=4, N=6$ | 3,000 runs per difficulty ($M=3, 4, 5$, total 9,000 runs) | **Expanded** | Validates correctness across all three runtime difficulty configurations. |
+| **Difficulty Settings** | Hardcoded constants `M = 4, N = 6` | `config::Difficulty` and `config::DifficultyConfig` | **Added** | Centralizes configuration to eliminate magic numbers and prevent desynchronization. |
+| **Attempt Tracking** | Unlimited guess loop | `game::GameSession` state machine with attempt limit $L$ | **Added** | Enforces limited attempts; invalid guesses are free; win-before-loss evaluation on attempt $A = L$. |
+| **Scoring Formula** | None (only guess count printed) | `scoring::calculate_score` ($100 \times \text{diff\_mult} \times \text{att\_mult}$) | **Added** | Transparent, difficulty-stratified points with attempt efficiency rewards. |
+| **Session Score** | None | `main::run_with_color` cumulative session tally across wins | **Added** | Persists session score in memory across rounds without requiring file I/O. |
+| **Terminal UI** | Plain text `println!` | `ui::ColorMode`, Unicode box drawing, progress bar, `NO_COLOR` fallback | **Added** | Decoupled presentation layer with zero escape leakage; pure plain text fallback. |
+| **Game Instructions** | Static text in welcome screen | Integrated into `ui::render_banner` | **Preserved & Enhanced** | Welcomes new players with clear explanation of Bulls, Cows, repetitions, and commands. |
+| **Replay Control** | Binary `(y/n)` | 3-way menu (replay same, change difficulty, exit) | **Enhanced** | Allows seamless difficulty switching between rounds. |
+
+### 14.2 What Was Preserved Verbatim or in Principle
+1. **The Duplicate-Safe Two-Pass Matching Algorithm**:
+   - The original two-pass algorithm (`score_guess`) was retained without altering its algorithmic logic. Pass 1 identifies coordinate-wise exact matches (Bulls) and marks both target and guess indices. Pass 2 scans remaining unmatched guess elements against remaining unmatched target elements (Cows).
+   - This ensures that duplicate pegs can never be counted multiple times.
+2. **Slice-Based Borrowing (`&[u32]`)**:
+   - The interface `score_guess(target: &[u32], guess: &[u32])` was kept identical. By taking borrowed slices rather than owned collections, the function does not take ownership or clone data, demonstrating idiomatic Rust memory efficiency.
+3. **Structured Input Error Modeling (`GuessError`)**:
+   - The structured error enum (`Quit`, `EmptyInput`, `InvalidLength`, `NonInteger`, `OutOfRange`) was retained, ensuring that input errors remain informative, distinct, and recoverable without panicking.
+4. **Whitespace Tolerance & Case-Insensitive Commands**:
+   - Tokenization via `split_whitespace()` continues to handle arbitrary mixtures of tabs, single spaces, and multiple spaces. `quit` remains case-insensitive.
+5. **RNG Dependency Injection for Seeded Determinism**:
+   - The seam `generate_target_with_rng<R: Rng + ?Sized>(rng: &mut R, config: &DifficultyConfig)` was preserved so that tests can inject seeded PRNGs (`rand::rngs::StdRng`) without relying on global randomness.
+6. **Independent Reference Oracle & Invariants**:
+   - The multiset frequency counting reference scorer was retained to verify that `score_guess` matches the theoretical oracle across thousands of randomized test cases.
+
+### 14.3 What Was Changed and Adapted
+1. **Stack Arrays `[u32; M]` to Heap Vectors `Vec<u32>`**:
+   - In Rust, array lengths are part of the type signature (`[T; N]`) and must be known at compile time. Because difficulty is chosen at runtime, sequence length $M \in \{3, 4, 5\}$ cannot be a constant generic parameter without complex compile-time monomorphization. `Vec<u32>` was adopted for internal storage of the target and guesses.
+2. **Marker Allocations Inside `score_guess`**:
+   - The marker arrays `target_used` and `guess_used` were changed from `[bool; M]` to `vec![false; len]`. Sizing markers dynamically from `target.len()` allows the same function to evaluate length 3, 4, or 5 sequences seamlessly.
+3. **Config-Aware Parameterization**:
+   - `parse_guess` and `generate_target` now accept a reference to `DifficultyConfig`, allowing bounds and token counts to vary dynamically according to the active game setting.
+4. **Expanded Replay Options**:
+   - The original binary `y/n` prompt was generalized into a 3-choice menu (`ReplayChoice::PlayAgainSame`, `ReplayChoice::ChangeDifficulty`, `ReplayChoice::Exit`), enabling players to switch difficulty levels without restarting the process.
+
+### 14.4 What Was Added
+1. **Authoritative Configuration System (`src/config.rs`)**:
+   - `Difficulty` enum and `DifficultyConfig` struct centralize sequence length $M$, range $N$, attempt limit $L$, and difficulty multiplier into one single source of truth.
+2. **Attempt-Limit State Machine (`src/game.rs`)**:
+   - Encapsulated in `GameSession`. Tracks valid attempts used ($A$), ensures invalid input is free, and enforces the win-before-loss precedence on attempt $A = L$.
+3. **Scoring and Multiplier Mathematics (`src/scoring.rs`)**:
+   - Implemented `calculate_score` with `BASE_POINTS = 100`, attempt efficiency bonus $\left(1.0 + \frac{L-A}{L}\right)$, and difficulty scaling (1.0×, 2.0×, 4.0×).
+4. **Decoupled Terminal Presentation (`src/ui.rs`)**:
+   - Created a dedicated presentation layer with Unicode box-drawing, color-coded pegs and outcomes, visual progress bar, and comprehensive `NO_COLOR` plain-text fallback.
+5. **Session Score Accumulation (`src/main.rs`)**:
+   - Added in-memory tracking of cumulative score across winning rounds in the program session.
+
+---
+
+## 15. Game Control Flow, State Machine & Transition Diagrams
+
+### 15.1 Top-Level Application Control Flow
+
+The high-level lifecycle of the program manages difficulty selection, gameplay rounds, session score accumulation, and replay decisions:
+
+```mermaid
+flowchart TD
+    Start([Program Start]) --> Welcome[Render Banner & Game Rules]
+    Welcome --> SelectDiff[Select Difficulty: Easy / Medium / Hard]
+    SelectDiff --> NewRound[Generate Secret Code & Init GameSession]
+    NewRound --> PlayRound[Play Interactive Round]
+    PlayRound --> Outcome{Round Outcome}
+    Outcome -- Won --> AddScore[Calculate Score & Add to Session Score]
+    Outcome -- Lost --> ShowLoss[Display Game Over & Reveal Secret]
+    Outcome -- Quit --> ShowQuit[Display Aborted & Reveal Secret]
+    Outcome -- EOF --> Exit([Exit Program])
+    AddScore --> ReplayPrompt[Replay Menu: 1. Same / 2. Change / 3. Exit]
+    ShowLoss --> ReplayPrompt
+    ShowQuit --> ReplayPrompt
+    ReplayPrompt -- Option 1: Play Again Same --> NewRound
+    ReplayPrompt -- Option 2: Change Difficulty --> SelectDiff
+    ReplayPrompt -- Option 3: Exit --> Exit
+```
+
+---
+
+### 15.2 Round Game State Machine & Transitions
+
+Within a single round, the `GameSession` state machine processes player inputs, validates tokens, updates attempt counts, and evaluates terminal states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> InProgress: Initialize GameSession (attempts = 0)
+    
+    InProgress --> InProgress: Invalid Input (attempts unchanged)
+    InProgress --> EvaluatingGuess: Valid Guess (attempts += 1)
+    InProgress --> Quit: Player types 'quit' (reveals secret)
+    InProgress --> Eof: Stream closed (EOF)
+    
+    EvaluatingGuess --> Won: bulls == sequence_length (Win-Before-Loss)
+    EvaluatingGuess --> Lost: bulls < sequence_length AND attempts == max_attempts
+    EvaluatingGuess --> InProgress: bulls < sequence_length AND attempts < max_attempts
+    
+    Won --> [*]: Calculate Score & Show Summary
+    Lost --> [*]: Reveal Secret & Show Loss Panel
+    Quit --> [*]: Reveal Secret
+    Eof --> [*]: Terminate Session
+```
+
+---
+
+### 15.3 Attempt Counter & Win-Before-Loss Precedence Flowchart
+
+A critical requirement is that a correct guess on the final allowed attempt ($A = L$) must be declared a **victory**, not a loss. The precedence logic inside `GameSession::submit_guess` evaluates victory before checking attempt limit exhaustion:
+
+```mermaid
+flowchart TD
+    Eval[Submit Guess: Evaluate Bulls & Cows] --> Incr[attempts_used = attempts_used + 1]
+    Incr --> CheckWin{bulls == M ?}
+    CheckWin -- Yes (Win on Attempt A <= L) --> Win[Return GameOutcome::Won]
+    CheckWin -- No --> CheckLimit{attempts_used >= L ?}
+    CheckLimit -- Yes (Attempt Limit Reached) --> Loss[Return GameOutcome::Lost]
+    CheckLimit -- No (Attempts Remaining) --> Continue[Return None: Continue Round]
+```
+
+---
+
+### 15.4 Module Dependency & Data Flow Hierarchy
+
+The application enforces a strict unidirectional dependency graph with no circular references:
+
+```mermaid
+graph TD
+    Main[src/main.rs] --> UI[src/ui.rs]
+    Main --> Game[src/game.rs]
+    Main --> Scoring[src/scoring.rs]
+    Main --> Config[src/config.rs]
+    
+    UI --> Config
+    UI --> Game
+    UI --> Scoring
+    
+    Game --> Config
+    Game --> Scoring
+    
+    Scoring --> Config
+```
+
+---
+
+## 16. Complete Architectural Reference Across All Modules
+
+### 16.1 `src/config.rs` (Configuration Subsystem)
+- **`Difficulty`**:
+  - Variants: `Easy`, `Medium`, `Hard`.
+  - Implements: `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Display`.
+  - `name(&self) -> &'static str`: Returns human-readable name.
+  - `config(&self) -> DifficultyConfig`: Maps difficulty variant to authoritative settings.
+  - `all() -> [Difficulty; 3]`: Authoritative slice of all difficulty options.
+  - `from_input(input: &str) -> Option<Difficulty>`: Case-insensitive parser supporting `"1"`, `"2"`, `"3"`, `"easy"`, `"medium"`, `"hard"`.
+- **`DifficultyConfig`**:
+  - `difficulty: Difficulty`: Active difficulty level.
+  - `sequence_length: usize`: Sequence length $M \in \{3, 4, 5\}$.
+  - `max_value: u32`: Peg range upper bound $N \in \{4, 6, 8\}$ (inclusive range $1..=N$).
+  - `max_attempts: usize`: Allowed guess limit $L \in \{10, 9, 8\}$.
+  - `multiplier: f64`: Difficulty multiplier $\{1.0, 2.0, 4.0\}$.
+- **`BASE_POINTS: u32 = 100`**: Authoritative base points constant.
+
+### 16.2 `src/scoring.rs` (Scoring Subsystem)
+- **`score_guess(target: &[u32], guess: &[u32]) -> (usize, usize)`**:
+  - Calculates duplicate-safe Bulls and Cows matching using two-pass marker scanning.
+  - Precondition: `assert_eq!(target.len(), guess.len())`.
+  - Complexity: $O(M^2)$ time, $O(M)$ heap space (stack-proportional for $M \le 5$).
+- **`calculate_score(config: &DifficultyConfig, attempts_used: usize) -> ScoreBreakdown`**:
+  - Computes transparent points breakdown.
+  - Preconditions: asserts $1 \le \text{attempts\_used} \le \text{config.max\_attempts}$.
+  - Multiplier: $\text{attempt\_multiplier} = 1.0 + \frac{L - A}{L}$ using 64-bit floating point arithmetic.
+  - Points: $\text{final\_score} = \operatorname{round}(100 \times \text{diff\_mult} \times \text{att\_mult}) \text{ as } \text{u32}$.
+- **`ScoreBreakdown`**:
+  - Struct holding `difficulty`, `attempts_used`, `attempts_remaining`, `base_points`, `difficulty_multiplier`, `attempt_multiplier`, `effective_multiplier`, `final_score`.
+- **`reference_score_guess(target: &[u32], guess: &[u32]) -> (usize, usize)`**:
+  - Independent reference oracle using multiset element frequency counters.
+
+### 16.3 `src/game.rs` (Game State Machine & Parsing)
+- **`GuessError`**:
+  - `Quit`, `EmptyInput`, `InvalidLength { expected, actual }`, `NonInteger(String)`, `OutOfRange { value, min, max }`.
+  - Implements `std::fmt::Display` and `std::error::Error`.
+- **`parse_guess(input: &str, config: &DifficultyConfig) -> Result<Vec<u32>, GuessError>`**:
+  - Tokenizes input, verifies token count against $M$, parses positive integers, and checks bounds $1..=N$.
+- **`generate_target(config: &DifficultyConfig) -> Vec<u32>`**:
+  - Samples $M$ numbers from $1..=N$ using thread RNG.
+- **`generate_target_with_rng<R: Rng + ?Sized>(rng: &mut R, config: &DifficultyConfig) -> Vec<u32>`**:
+  - Generic RNG seam for deterministic tests.
+- **`GameSession`**:
+  - Holds `config: DifficultyConfig`, `secret: Vec<u32>`, `attempts_used: usize`.
+  - `submit_guess(&mut self, guess: Vec<u32>) -> (GuessEvaluation, Option<GameOutcome>)`.
+  - Evaluates win condition first; if not won, evaluates attempt limit.
+- **`GameOutcome`**:
+  - `Won { attempts: usize, score: ScoreBreakdown }`
+  - `Lost { attempts: usize, secret: Vec<u32> }`
+  - `Quit { attempts: usize, secret: Vec<u32> }`
+  - `Eof`
+- **`ReplayChoice`**:
+  - `PlayAgainSame`, `ChangeDifficulty`, `Exit`.
+
+### 16.4 `src/ui.rs` (Presentation & ANSI Subsystem)
+- **`ColorMode`**:
+  - `Enabled` (ANSI styling), `Disabled` (Pure plain text).
+  - `auto_detect()`: Checks `std::env::var_os("NO_COLOR")`.
+  - Color helpers (`bold`, `dim`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `difficulty_color`) ensure immediate `\x1b[0m` reset.
+- **Rendering Functions**:
+  - `render_banner`: Title banner, box drawing, and How to Play instructions.
+  - `render_difficulty_menu`: Displays Easy, Medium, Hard with full parameter specifications.
+  - `render_status_panel`: Box panel with difficulty, code length, value range, attempts, and session score.
+  - `render_progress_bar`: Visual indicator `[████████░░] 8 remaining`.
+  - `render_feedback`: Formatted Bulls (green) and Cows (yellow) counts.
+  - `render_win_summary`: Complete score breakdown panel.
+  - `render_loss_summary`: Game over panel revealing secret target.
+  - `render_quit_summary`: Round aborted panel revealing secret target.
+  - `render_replay_menu`: Interactive 3-way replay menu.
+  - `render_error`: Diagnostic error messages.
+
+### 16.5 `src/main.rs` (Application Coordinator)
+- **`select_difficulty<R, W>`**: Interactive menu loop re-prompting on invalid choice without panicking.
+- **`play_round<R, W>`**: Single-round loop prompting guesses, handling errors without attempt penalties, and rendering outcomes.
+- **`ask_replay<R, W>`**: Post-game decision prompt managing round transitions.
+- **`run_with_color<R, W>`**: Top-level coordinator tracking cumulative `session_score`.
+- **`main()`**: Production entry point binding to `io::stdin()` and `io::stdout()` with automatic color detection.
+
 
 
