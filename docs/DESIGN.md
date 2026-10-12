@@ -250,5 +250,11 @@ Testing is organized into three distinct tiers:
 ---
 
 ## 12. Implementation Deviations
-*(To be updated during Phase 2 if any deviation from the baseline is required.)*
-- None to date.
+
+No fundamental architectural deviations occurred from the pre-implementation baseline:
+- Fixed-size arrays `[u32; M]` were strictly maintained for targets and validated guesses.
+- Temporary `Vec<u32>` was used exclusively during token parsing before conversion into `[u32; M]`.
+- Scoring algorithm cleanly utilized stack-allocated boolean markers `[bool; M]` with immutable slice borrowing `&[u32]`.
+- Functions encapsulated all substantive logic; macros were restricted to formatting and test assertions.
+- The two minor test assertion adjustments during Phase 2, Steps 2–4 (correcting inadvertent exact index placements in unit test inputs) were documented in `docs/DEV_LOG.md` and `docs/TESTING.md`.
+

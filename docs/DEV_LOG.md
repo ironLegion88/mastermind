@@ -212,8 +212,107 @@ Implement secret target sequence generation (`generate_target`) creating an arra
 
 ### Status & Next Steps
 - Random target generation complete and verified.
-- Commit Step 6.
+- Commit Hash: `e116a08`
 - Proceed to Steps 7 & 8: Interactive gameplay, game loop, quit, win, and replay handling.
+
+---
+
+## 2026-10-12: Phase 2, Steps 7 & 8 — Interactive Gameplay, Game Loop, Quit, Win, and Replay Handling
+
+### Objective
+Implement the interactive game session loop (`play_game`), top-level coordinator (`run`), graceful termination (`quit`, `EOF`), win celebration, and replay handling (`y/n`), ensuring full testability by abstracting over generic `BufRead` and `Write` traits.
+
+### Actions & Design Decisions
+1. **Outcome Modeling (`src/main.rs`)**:
+   - Defined `GameOutcome` enum:
+     - `Won { attempts: usize }`: successful code cracking with round count.
+     - `Quit`: voluntary termination requested by player.
+     - `Eof`: standard input closed.
+2. **Game Loop (`play_game`)**:
+   - Accepts `target: [u32; M]`, `reader: &mut R`, `writer: &mut W`.
+   - Prompts player with `Guess #<count>: ` and flushes stdout/writer.
+   - Detects EOF on `read_line == 0` and terminates cleanly without infinite retry loops.
+   - Parses input via `parse_guess(&line_buffer)`.
+   - On error: displays descriptive explanation from `GuessError` and prompts again without incrementing the attempt count.
+   - On valid guess: increments attempt count, evaluates score via `score_guess`, prints pluralized Bulls and Cows counts.
+   - On victory ($bulls == M$): prints congratulations and returns `GameOutcome::Won`.
+   - On quit: reveals secret code and returns `GameOutcome::Quit`.
+3. **Coordinator & Replay (`run`)**:
+   - Prints welcome banner detailing configuration ($M=4, N=6$) and rules.
+   - In a loop, generates a fresh target and executes `play_game`.
+   - On win: prompts `"Would you like to play another game? (y/n): "`.
+     - `"y"` / `"yes"`: initiates a new game session with a newly generated target sequence.
+     - `"n"` / other: prints farewell and exits loop cleanly.
+   - On quit / EOF: breaks cleanly and exits.
+4. **Integration Tests (`src/main.rs`)**:
+   - Implemented 6 automated integration tests using `std::io::Cursor` for mock input and `Vec<u8>` for mock output:
+     - `test_play_game_win_first_guess`: validates winning on first attempt.
+     - `test_play_game_multi_guess_with_invalid_attempts`: verifies that malformed inputs (invalid length, out of range, non-integers, empty line) trigger error messages and do not increase the attempt counter, followed by scoring and victory.
+     - `test_play_game_quit_midway`: verifies quit midway through game reveals target and exits cleanly.
+     - `test_play_game_eof_handling`: verifies closed stream terminates cleanly.
+     - `test_run_session_quit_immediately`: tests top-level coordinator lifecycle.
+     - `test_run_session_replay_prompt_no`: tests replay exit.
+5. **Verification**:
+   - `cargo check`: Passed.
+   - `cargo fmt --check`: Clean formatting verified.
+   - `cargo test`: All 29 tests passed cleanly in 0.04s.
+
+### Status & Next Steps
+- Core game loop and replay coordinator complete and verified.
+- Commit Hash: `5633cfb`
+- Proceed to Step 9: Integration and manual testing procedures.
+
+---
+
+## 2026-10-12: Phase 2, Step 9 — Integration and Manual Test Procedures
+
+### Objective
+Perform manual and automated end-to-end verification of the executable binary, verify interactive CLI piping, document full test matrices and invariant properties in `docs/TESTING.md`.
+
+### Actions & Design Decisions
+1. **Interactive CLI Verification**:
+   - Executed `cargo run` in PowerShell with piped simulated input:
+     `"1 2`n1 2 7 4`n1 2 x 4`nquit`n" | cargo run`
+   - Verified that:
+     - Welcome banner displayed correct rules and parameters.
+     - `Guess #1` remained constant across three consecutive invalid attempts (invalid length, out of range, non-integer).
+     - Informative error messages were displayed for each malformed guess.
+     - Secret code was cleanly revealed upon typing `quit`.
+     - Exit code 0 was returned.
+2. **Testing Documentation (`docs/TESTING.md`)**:
+   - Documented the three-tier testing strategy.
+   - Created exhaustive deterministic test table (18 cases for `score_guess` and 18 cases for `parse_guess`).
+   - Documented randomized differential testing methodology (10,000 iterations, PRNG seed `42`, 5 invariants, independent frequency-counting reference algorithm).
+   - Documented automated stream integration tests and manual CLI piping execution.
+
+### Status & Next Steps
+- Testing documentation complete and CLI behavior verified.
+- Commit Hash: `333bb3d`
+- Proceed to Step 10: Final documentation (`README.md`, `DESIGN.md`) and comprehensive verification checklist.
+
+---
+
+## 2026-10-12: Phase 2, Step 10 — Final Documentation and Verification
+
+### Objective
+Create user guide (`README.md`), finalize design documentation (`docs/DESIGN.md`), verify code formatting, check compiler warnings, and build optimized release artifacts.
+
+### Actions & Design Decisions
+1. **User Guide (`README.md`)**:
+   - Created comprehensive guide covering project overview, Bulls and Cows rules, game parameters ($M=4, N=6$), setup instructions, debug and release run commands, testing commands, and project file structure.
+2. **Design Document Update (`docs/DESIGN.md`)**:
+   - Updated Section 12 (Implementation Deviations) confirming adherence to the pre-implementation baseline.
+3. **Comprehensive Verification**:
+   - Executed `cargo fmt --check`: Succeeded with zero diffs.
+   - Executed `cargo check`: Succeeded with zero warnings.
+   - Executed `cargo test`: 29 tests passed (12 scoring tests, 8 parsing tests, 3 generation tests, 6 integration tests) in 0.04s.
+   - Executed `cargo build`: Built debug target in `target/debug/mastermind.exe`.
+   - Executed `cargo build --release`: Built optimized release binary in `target/release/mastermind.exe`.
+
+### Status & Next Steps
+- Project implementation, testing, and documentation are complete and verified.
+
+
 
 
 
