@@ -185,7 +185,7 @@ graph LR
     ParseU32 -- No --> TokenErr[Return NonInteger Error]
     ParseU32 -- Yes --> RangeCheck{All in 1..=N?}
     RangeCheck -- No --> RangeErr[Return OutOfRange Error]
-    RangeCheck -- Yes --> Success[Return Ok [u32; M]]
+    RangeCheck -- Yes --> Success["Return Ok [u32; M]"]
 ```
 
 ### 8.2 Error Types
@@ -381,21 +381,21 @@ The high-level lifecycle of the program manages difficulty selection, gameplay r
 
 ```mermaid
 flowchart TD
-    Start([Program Start]) --> Welcome[Render Banner & Game Rules]
-    Welcome --> SelectDiff[Select Difficulty: Easy / Medium / Hard]
-    SelectDiff --> NewRound[Generate Secret Code & Init GameSession]
-    NewRound --> PlayRound[Play Interactive Round]
+    Start([Program Start]) --> Welcome["Render Banner & Game Rules"]
+    Welcome --> SelectDiff["Select Difficulty: Easy / Medium / Hard"]
+    SelectDiff --> NewRound["Generate Secret Code & Init GameSession"]
+    NewRound --> PlayRound["Play Interactive Round"]
     PlayRound --> Outcome{Round Outcome}
-    Outcome -- Won --> AddScore[Calculate Score & Add to Session Score]
-    Outcome -- Lost --> ShowLoss[Display Game Over & Reveal Secret]
-    Outcome -- Quit --> ShowQuit[Display Aborted & Reveal Secret]
+    Outcome -- Won --> AddScore["Calculate Score & Add to Session Score"]
+    Outcome -- Lost --> ShowLoss["Display Game Over & Reveal Secret"]
+    Outcome -- Quit --> ShowQuit["Display Aborted & Reveal Secret"]
     Outcome -- EOF --> Exit([Exit Program])
-    AddScore --> ReplayPrompt[Replay Menu: 1. Same / 2. Change / 3. Exit]
+    AddScore --> ReplayPrompt["Replay Menu: 1. Same / 2. Change / 3. Exit"]
     ShowLoss --> ReplayPrompt
     ShowQuit --> ReplayPrompt
-    ReplayPrompt -- Option 1: Play Again Same --> NewRound
-    ReplayPrompt -- Option 2: Change Difficulty --> SelectDiff
-    ReplayPrompt -- Option 3: Exit --> Exit
+    ReplayPrompt -- "Option 1: Play Again Same" --> NewRound
+    ReplayPrompt -- "Option 2: Change Difficulty" --> SelectDiff
+    ReplayPrompt -- "Option 3: Exit" --> Exit
 ```
 
 ---
@@ -431,12 +431,12 @@ A critical requirement is that a correct guess on the final allowed attempt ($A 
 
 ```mermaid
 flowchart TD
-    Eval[Submit Guess: Evaluate Bulls & Cows] --> Incr[attempts_used = attempts_used + 1]
-    Incr --> CheckWin{bulls == M ?}
-    CheckWin -- Yes (Win on Attempt A <= L) --> Win[Return GameOutcome::Won]
-    CheckWin -- No --> CheckLimit{attempts_used >= L ?}
-    CheckLimit -- Yes (Attempt Limit Reached) --> Loss[Return GameOutcome::Lost]
-    CheckLimit -- No (Attempts Remaining) --> Continue[Return None: Continue Round]
+    Eval["Submit Guess: Evaluate Bulls & Cows"] --> Incr["attempts_used = attempts_used + 1"]
+    Incr --> CheckWin{"bulls == M ?"}
+    CheckWin -- "Yes (Win on Attempt A <= L)" --> Win["Return GameOutcome::Won"]
+    CheckWin -- "No" --> CheckLimit{"attempts_used >= L ?"}
+    CheckLimit -- "Yes (Attempt Limit Reached)" --> Loss["Return GameOutcome::Lost"]
+    CheckLimit -- "No (Attempts Remaining)" --> Continue["Return None: Continue Round"]
 ```
 
 ---
@@ -447,10 +447,10 @@ The application enforces a strict unidirectional dependency graph with no circul
 
 ```mermaid
 graph TD
-    Main[src/main.rs] --> UI[src/ui.rs]
-    Main --> Game[src/game.rs]
-    Main --> Scoring[src/scoring.rs]
-    Main --> Config[src/config.rs]
+    Main["src/main.rs"] --> UI["src/ui.rs"]
+    Main --> Game["src/game.rs"]
+    Main --> Scoring["src/scoring.rs"]
+    Main --> Config["src/config.rs"]
     
     UI --> Config
     UI --> Game
